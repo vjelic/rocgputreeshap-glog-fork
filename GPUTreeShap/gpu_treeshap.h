@@ -32,7 +32,6 @@
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
-#include <thrust/system/cuda/error.h>
 #include <thrust/system_error.h>
 
 #include <hipcub/hipcub.hpp>
@@ -43,6 +42,9 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+
+typedef unsigned long long uhipint_t;
+#define WARP_SIZE WAVEFRONT_SIZE
 
 namespace gpu_treeshap {
 
@@ -209,21 +211,15 @@ __device__ __forceinline__ double atomicAddDouble(double* address,
 }
 #endif
 
-__forceinline__ __device__ unsigned int lanemask32_lt() {
-  unsigned int lanemask32_lt;
-  asm volatile("mov.u32 %0, %%lanemask_lt;" : "=r"(lanemask32_lt));
-  return (lanemask32_lt);
-}
-
 // Like a coalesced group, except we can make the assumption that all threads in
 // a group are next to each other. This makes shuffle operations much cheaper.
 class ContiguousGroup {
  public:
-  __device__ ContiguousGroup(uint32_t mask) : mask_(mask) {}
+  __device__ ContiguousGroup(uhipint_t mask) : mask_(mask) {}
 
   __device__ uint32_t size() const { return __popc(mask_); }
   __device__ uint32_t thread_rank() const {
-    return __popc(mask_ & lanemask32_lt());
+    return __popc(mask_ & __lanemask_lt());
   }
   template <typename T>
   __device__ T shfl(T val, uint32_t src) const {
@@ -233,7 +229,7 @@ class ContiguousGroup {
   __device__ T shfl_up(T val, uint32_t delta) const {
     return __shfl_up_sync(mask_, val, delta);
   }
-  __device__ uint32_t ballot(int predicate) const {
+  __device__ uhipint_t ballot(int predicate) const {
     return __ballot_sync(mask_, predicate) >> (__ffs(mask_) - 1);
   }
 
@@ -247,35 +243,18 @@ class ContiguousGroup {
     }
     return shfl(val, size() - 1);
   }
-  uint32_t mask_;
+
+  uhipint_t mask_;
 };
 
 // Separate the active threads by labels
 // This functionality is available in cuda 11.0 on cc >=7.0
 // We reimplement for backwards compatibility
 // Assumes partitions are contiguous
-inline __device__ ContiguousGroup active_labeled_partition(uint32_t mask,
+inline __device__ ContiguousGroup active_labeled_partition(uhipint_t mask,
                                                            int label) {
-#if __CUDA_ARCH__ >= 700
-  uint32_t subgroup_mask = __match_any_sync(mask, label);
-#else
-  uint32_t subgroup_mask = 0;
-  for (int i = 0; i < 32;) {
-    int current_label = __shfl_sync(mask, label, i);
-    uint32_t ballot = __ballot_sync(mask, label == current_label);
-    if (label == current_label) {
-      subgroup_mask = ballot;
-    }
-    uint32_t completed_mask =
-        (1 << (32 - __clz(ballot))) - 1;  // Threads that have finished
-    // Find the start of the next group, mask off completed threads from active
-    // threads Then use ffs - 1 to find the position of the next group
-    int next_i = __ffs(mask & ~completed_mask) - 1;
-    if (next_i == -1) break;  // -1 indicates all finished
-    assert(next_i > i);  // Prevent infinite loops when the constraints not met
-    i = next_i;
-  }
-#endif
+  uhipint_t subgroup_mask = __match_any_sync(mask, label);
+
   return ContiguousGroup(subgroup_mask);
 }
 
@@ -429,7 +408,7 @@ ConfigureThread(const DatasetT& X, const size_t bins_per_row,
   // Partition work
   // Each warp processes a set of training instances applied to a path
   size_t tid = kBlockSize * blockIdx.x + threadIdx.x;
-  const size_t warp_size = 32;
+  const size_t warp_size = WAROP_SIZE;
   size_t warp_rank = tid / warp_size;
   if (warp_rank >= bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp)) {
     *thread_active = false;
@@ -470,7 +449,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
       &thread_active);
-  uint32_t mask = __ballot_sync(FULL_MASK, thread_active);
+  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   float zero_fraction = e.zero_fraction;
@@ -497,7 +476,7 @@ void ComputeShap(
     size_t num_groups, double* phis) {
   size_t bins_per_row = bin_segments.size() - 1;
   const int kBlockThreads = GPUTREESHAP_MAX_THREADS_PER_BLOCK;
-  const int warps_per_block = kBlockThreads / 32;
+  const int warps_per_block = kBlockThreads / WARP_SIZE;
   const int kRowsPerWarp = 1024;
   size_t warps_needed = bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp);
 
@@ -575,7 +554,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
-  uint32_t mask = __ballot_sync(FULL_MASK, thread_active);
+  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e->path_idx);
@@ -622,7 +601,7 @@ void ComputeShapInteractions(
     size_t num_groups, double* phis) {
   size_t bins_per_row = bin_segments.size() - 1;
   const int kBlockThreads = GPUTREESHAP_MAX_THREADS_PER_BLOCK;
-  const int warps_per_block = kBlockThreads / 32;
+  const int warps_per_block = kBlockThreads / WARP_SIZE;
   const int kRowsPerWarp = 100;
   size_t warps_needed = bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp);
 
@@ -656,7 +635,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
-  uint32_t mask = __ballot_sync(FULL_MASK, thread_active);
+  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e->path_idx);
@@ -710,7 +689,7 @@ void ComputeShapTaylorInteractions(
     size_t num_groups, double* phis) {
   size_t bins_per_row = bin_segments.size() - 1;
   const int kBlockThreads = GPUTREESHAP_MAX_THREADS_PER_BLOCK;
-  const int warps_per_block = kBlockThreads / 32;
+  const int warps_per_block = kBlockThreads / WARP_SIZE;
   const int kRowsPerWarp = 100;
   size_t warps_needed = bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp);
 
@@ -767,7 +746,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
       &thread_active);
 
-  uint32_t mask = __ballot_sync(FULL_MASK, thread_active);
+  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e.path_idx);
@@ -775,15 +754,18 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   for (int64_t x_idx = start_row; x_idx < end_row; x_idx++) {
     float result = 0.0f;
     bool x_cond = e.EvaluateSplit(X, x_idx);
-    uint32_t x_ballot = labelled_group.ballot(x_cond);
+    uhipint_t x_ballot = labelled_group.ballot(x_cond);
+
     for (int64_t r_idx = 0; r_idx < R.NumRows(); r_idx++) {
       bool r_cond = e.EvaluateSplit(R, r_idx);
-      uint32_t r_ballot = labelled_group.ballot(r_cond);
-      assert(!e.IsRoot() ||
-             (x_cond == r_cond));  // These should be the same for the root
+      uhipint_t r_ballot = labelled_group.ballot(r_cond);
+
+      assert(!e.IsRoot() || (x_cond == r_cond));  // These should be the same for the root
+
       uint32_t s = __popc(x_ballot & ~r_ballot);
       uint32_t n = __popc(x_ballot ^ r_ballot);
       float tmp = 0.0f;
+
       // Theorem 1
       if (x_cond && !r_cond) {
         tmp += s_W[s - 1][n];
@@ -794,6 +776,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       if (e.IsRoot() && s == 0) {
         tmp += 1.0f;
       }
+
       // If neither foreground or background go down this path, ignore this path
       bool reached_leaf = !labelled_group.ballot(!x_cond && !r_cond);
       tmp *= reached_leaf;
@@ -805,6 +788,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
       // Root writes bias
       auto feature = e.IsRoot() ? X.NumCols() : e.feature_idx;
+
       atomicAddDouble(
           &phis[IndexPhi(x_idx, num_groups, e.group, X.NumCols(), feature)],
           result * e.v);
@@ -822,7 +806,7 @@ void ComputeShapInterventional(
     size_t num_groups, double* phis) {
   size_t bins_per_row = bin_segments.size() - 1;
   const int kBlockThreads = GPUTREESHAP_MAX_THREADS_PER_BLOCK;
-  const int warps_per_block = kBlockThreads / 32;
+  const int warps_per_block = kBlockThreads / WARP_SIZE;
   const int kRowsPerWarp = 100;
   size_t warps_needed = bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp);
 
@@ -839,7 +823,7 @@ void GetBinSegments(const PathVectorT& paths, const SizeVectorT& bin_map,
                     SizeVectorT* bin_segments) {
   DeviceAllocatorT alloc;
   size_t num_bins =
-      thrust::reduce(thrust::cuda::par(alloc), bin_map.begin(), bin_map.end(),
+      thrust::reduce(thrust::hip::par(alloc), bin_map.begin(), bin_map.end(),
                      size_t(0), thrust::maximum<size_t>()) +
       1;
   bin_segments->resize(num_bins + 1, 0);
@@ -853,7 +837,7 @@ void GetBinSegments(const PathVectorT& paths, const SizeVectorT& bin_map,
                   d_bin_map[path_idx],
               1);
   });
-  thrust::exclusive_scan(thrust::cuda::par(alloc), bin_segments->begin(),
+  thrust::exclusive_scan(thrust::hip::par(alloc), bin_segments->begin(),
                          bin_segments->end(), bin_segments->begin());
 }
 
@@ -867,7 +851,7 @@ struct DeduplicateKeyTransformOp {
 
 inline void CheckCuda(hipError_t err) {
   if (err != hipSuccess) {
-    throw thrust::system_error(err, thrust::cuda_category());
+    throw thrust::system_error(err, thrust::hip_category());
   }
 }
 
@@ -883,7 +867,7 @@ void DeduplicatePaths(PathVectorT* device_paths,
                       PathVectorT* deduplicated_paths) {
   DeviceAllocatorT alloc;
   // Sort by feature
-  thrust::sort(thrust::cuda::par(alloc), device_paths->begin(),
+  thrust::sort(thrust::hip::par(alloc), device_paths->begin(),
                device_paths->end(),
                [=] __device__(const PathElement<SplitConditionT>& a,
                               const PathElement<SplitConditionT>& b) {
@@ -935,7 +919,7 @@ template <typename PathVectorT, typename SplitConditionT, typename SizeVectorT,
 void SortPaths(PathVectorT* paths, const SizeVectorT& bin_map) {
   auto d_bin_map = bin_map.data();
   DeviceAllocatorT alloc;
-  thrust::sort(thrust::cuda::par(alloc), paths->begin(), paths->end(),
+  thrust::sort(thrust::hip::par(alloc), paths->begin(), paths->end(),
                [=] __device__(const PathElement<SplitConditionT>& a,
                               const PathElement<SplitConditionT>& b) {
                  size_t a_bin = d_bin_map[a.path_idx];
@@ -967,7 +951,7 @@ struct BFDCompare {
 // Efficient O(nlogn) implementation with balanced tree using std::set
 template <typename IntVectorT>
 std::vector<size_t> BFDBinPacking(const IntVectorT& counts,
-                                  int bin_limit = 32) {
+                                  int bin_limit = WARP_SIZE) {
   thrust::host_vector<int> counts_host(counts);
   std::vector<kv> path_lengths(counts_host.size());
   for (auto i = 0ull; i < counts_host.size(); i++) {
@@ -1008,7 +992,7 @@ std::vector<size_t> BFDBinPacking(const IntVectorT& counts,
 // Inefficient O(n^2) implementation
 template <typename IntVectorT>
 std::vector<size_t> FFDBinPacking(const IntVectorT& counts,
-                                  int bin_limit = 32) {
+                                  int bin_limit = WARP_SIZE) {
   thrust::host_vector<int> counts_host(counts);
   std::vector<kv> path_lengths(counts_host.size());
   for (auto i = 0ull; i < counts_host.size(); i++) {
@@ -1042,7 +1026,7 @@ std::vector<size_t> FFDBinPacking(const IntVectorT& counts,
 // Next Fit bin packing
 // O(n) implementation
 template <typename IntVectorT>
-std::vector<size_t> NFBinPacking(const IntVectorT& counts, int bin_limit = 32) {
+std::vector<size_t> NFBinPacking(const IntVectorT& counts, int bin_limit = WARP_SIZE) {
   thrust::host_vector<int> counts_host(counts);
   std::vector<size_t> bin_map(counts_host.size());
   size_t current_bin = 0;
@@ -1099,7 +1083,7 @@ void ValidatePaths(const PathVectorT& device_paths,
   DeviceAllocatorT alloc;
   PathTooLongOp too_long_op;
   auto invalid_length =
-      thrust::any_of(thrust::cuda::par(alloc), path_lengths.begin(),
+      thrust::any_of(thrust::hip::par(alloc), path_lengths.begin(),
                      path_lengths.end(), too_long_op);
 
   if (invalid_length) {
@@ -1109,7 +1093,7 @@ void ValidatePaths(const PathVectorT& device_paths,
   IncorrectVOp<SplitConditionT> incorrect_v_op{device_paths.data().get()};
   auto counting = thrust::counting_iterator<size_t>(0);
   auto incorrect_v =
-      thrust::any_of(thrust::cuda::par(alloc), counting + 1,
+      thrust::any_of(thrust::hip::par(alloc), counting + 1,
                      counting + device_paths.size(), incorrect_v_op);
 
   if (incorrect_v) {
@@ -1169,7 +1153,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
   PathVectorT sorted_paths(device_paths);
   DeviceAllocatorT alloc;
   // Make sure groups are contiguous
-  thrust::sort(thrust::cuda::par(alloc), sorted_paths.begin(),
+  thrust::sort(thrust::hip::par(alloc), sorted_paths.begin(),
                sorted_paths.end(),
                [=] __device__(const PathElement<SplitConditionT>& a,
                               const PathElement<SplitConditionT>& b) {
@@ -1186,7 +1170,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
                                                   PathIdxTransformOp());
   PathVectorT combined(sorted_paths.size());
   auto combined_out = thrust::reduce_by_key(
-      thrust::cuda::par(alloc), path_key, path_key + sorted_paths.size(),
+      thrust::hip::par(alloc), path_key, path_key + sorted_paths.size(),
       sorted_paths.begin(), thrust::make_discard_iterator(), combined.begin(),
       thrust::equal_to<size_t>(),
       [=] __device__(PathElement<SplitConditionT> a,
@@ -1205,7 +1189,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
   auto values =
       thrust::make_transform_iterator(combined.begin(), BiasTransformOp());
 
-  auto out_itr = thrust::reduce_by_key(thrust::cuda::par(alloc), group_key,
+  auto out_itr = thrust::reduce_by_key(thrust::hip::par(alloc), group_key,
                                        group_key + num_paths, values,
                                        keys_out.begin(), values_out.begin());
 

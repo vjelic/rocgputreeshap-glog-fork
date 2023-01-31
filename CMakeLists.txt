@@ -15,15 +15,17 @@ endif()
 
 list(APPEND CMAKE_PREFIX_PATH ${ROCM_PATH} /opt/rocm)
 
-#find_package(HIP)
 enable_language(HIP)
-include(CheckCXXCompilerFlag)
-
+find_package(hip REQUIRED)
 find_package(rocthrust REQUIRED)
 
 include_directories(${HIP_INCLUDE_DIRS})
 include_directories(${HIP_INCLUDE_DIRS}/hip)
-message(STATUS "LLVM include found in: ${HIP_INCLUDE_DIRS}")
+message(STATUS "HIP include found in: ${HIP_INCLUDE_DIRS}")
+
+set(CMAKE_HIP_FLAGS "-std=c++14")
+
+#add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-std=c++14>)
 
 # GPUTreeSHAP target is header-only
 add_library(GPUTreeShap INTERFACE)
@@ -51,13 +53,16 @@ if(BUILD_GTEST)
 endif()
 
 if(BUILD_EXAMPLES)
-  add_executable(GPUTreeShapExample example/example.hip)
-  set_target_properties(GPUTreeShapExample PROPERTIES LINKER_LANGUAGE HIP)
-  target_link_libraries(GPUTreeShapExample PRIVATE GPUTreeShap)
-  target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${COMPILE_OPTIONS}>)
-  if(NOT MSVC)
-    target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GCC_COMPILE_OPTIONS}>)
-  endif()
+    set(exam_src example/example.cxx)
+    set_source_files_properties(${exam_src} PROPERTIES LANGUAGE HIP)
+    add_executable(GPUTreeShapExample ${exam_src})
+
+    set_target_properties(GPUTreeShapExample PROPERTIES LINKER_LANGUAGE HIP)
+    target_link_libraries(GPUTreeShapExample PRIVATE GPUTreeShap)
+    target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${COMPILE_OPTIONS}>)
+    if(NOT MSVC)
+        target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GCC_COMPILE_OPTIONS}>)
+    endif()
 endif()
 
 if(BUILD_BENCHMARKS)

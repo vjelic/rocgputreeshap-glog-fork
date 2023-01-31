@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION.
  *
@@ -34,7 +35,7 @@
 #include <thrust/system/cuda/error.h>
 #include <thrust/system_error.h>
 
-#include <cub/cub.cuh>
+#include <hipcub/hipcub.hpp>
 
 #include <algorithm>
 #include <functional>
@@ -864,8 +865,8 @@ struct DeduplicateKeyTransformOp {
   }
 };
 
-inline void CheckCuda(cudaError_t err) {
-  if (err != cudaSuccess) {
+inline void CheckCuda(hipError_t err) {
+  if (err != hipSuccess) {
     throw thrust::system_error(err, thrust::cuda_category());
   }
 }
@@ -902,7 +903,7 @@ void DeduplicatePaths(PathVectorT* device_paths,
 
   thrust::device_vector<size_t> d_num_runs_out(1);
   size_t* h_num_runs_out;
-  CheckCuda(cudaMallocHost(&h_num_runs_out, sizeof(size_t)));
+  CheckCuda(hipHostMalloc(&h_num_runs_out, sizeof(size_t)));
 
   auto combine = [] __host__ __device__(PathElement<SplitConditionT> a,
                                PathElement<SplitConditionT> b) {
@@ -912,21 +913,21 @@ void DeduplicatePaths(PathVectorT* device_paths,
     return a;
   };  // NOLINT
   size_t temp_size = 0;
-  CheckCuda(cub::DeviceReduce::ReduceByKey(
+  CheckCuda(hipcub::DeviceReduce::ReduceByKey(
       nullptr, temp_size, key_transform, DiscardOverload<Pair>(),
       device_paths->begin(), deduplicated_paths->begin(),
       d_num_runs_out.begin(), combine, device_paths->size()));
   using TempAlloc = RebindVector<char, DeviceAllocatorT>;
   TempAlloc tmp(temp_size);
-  CheckCuda(cub::DeviceReduce::ReduceByKey(
+  CheckCuda(hipcub::DeviceReduce::ReduceByKey(
       tmp.data().get(), temp_size, key_transform, DiscardOverload<Pair>(),
       device_paths->begin(), deduplicated_paths->begin(),
       d_num_runs_out.begin(), combine, device_paths->size()));
 
-  CheckCuda(cudaMemcpy(h_num_runs_out, d_num_runs_out.data().get(),
-                       sizeof(size_t), cudaMemcpyDeviceToHost));
+  CheckCuda(hipMemcpy(h_num_runs_out, d_num_runs_out.data().get(),
+                       sizeof(size_t), hipMemcpyDeviceToHost));
   deduplicated_paths->resize(*h_num_runs_out);
-  CheckCuda(cudaFreeHost(h_num_runs_out));
+  CheckCuda(hipHostFree(h_num_runs_out));
 }
 
 template <typename PathVectorT, typename SplitConditionT, typename SizeVectorT,

@@ -21,6 +21,7 @@ find_package(rocthrust REQUIRED)
 
 include_directories(${HIP_INCLUDE_DIRS})
 include_directories(${HIP_INCLUDE_DIRS}/hip)
+include_directories("warp-primitives/include")
 message(STATUS "HIP include found in: ${HIP_INCLUDE_DIRS}")
 
 set(CMAKE_HIP_FLAGS "-std=c++14")

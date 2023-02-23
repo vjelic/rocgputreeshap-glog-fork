@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include <GPUTreeShap/gpu_treeshap.h>
+#include <gpu_treeshap.h>
 
 #include <thrust/device_vector.h>
 
@@ -23,7 +23,6 @@
 #include <limits>
 #include <string>
 #include <vector>
-#include "../GPUTreeShap/gpu_treeshap.h"
 
 // Minimal decision tree implementation that stores sample weights of training
 // data at each node. The sample weight roughly corresponds to the "amount" of

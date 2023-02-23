@@ -1,4 +1,4 @@
-#include "hip/hip_runtime.h"
+
 /*
  * Copyright (c) 2022, NVIDIA CORPORATION.
  *
@@ -16,6 +16,13 @@
  */
 
 #pragma once
+
+#include <algorithm>
+#include <functional>
+#include <set>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 #include <thrust/copy.h>
 #include <thrust/device_allocator.h>
@@ -36,12 +43,9 @@
 
 #include <hipcub/hipcub.hpp>
 
-#include <algorithm>
-#include <functional>
-#include <set>
-#include <stdexcept>
-#include <utility>
-#include <vector>
+#include <hip/hip_runtime.h>
+
+#include "amd_warp_primitives.h"
 
 typedef unsigned long long uhipint_t;
 #define WARP_SIZE WAVEFRONT_SIZE
@@ -217,20 +221,20 @@ class ContiguousGroup {
  public:
   __device__ ContiguousGroup(uhipint_t mask) : mask_(mask) {}
 
-  __device__ uint32_t size() const { return __popc(mask_); }
+  __device__ uint32_t size() const { return __popcll(mask_); }
   __device__ uint32_t thread_rank() const {
-    return __popc(mask_ & __lanemask_lt());
+    return __popcll(mask_ & __lanemask_lt());
   }
   template <typename T>
   __device__ T shfl(T val, uint32_t src) const {
-    return __shfl_sync(mask_, val, src + __ffs(mask_) - 1);
+    return __shfl_sync(mask_, val, src + __ffsll(mask_) - 1);
   }
   template <typename T>
   __device__ T shfl_up(T val, uint32_t delta) const {
     return __shfl_up_sync(mask_, val, delta);
   }
   __device__ uhipint_t ballot(int predicate) const {
-    return __ballot_sync(mask_, predicate) >> (__ffs(mask_) - 1);
+    return __ballot_sync(mask_, predicate) >> (__ffsll(mask_) - 1);
   }
 
   template <typename T, typename OpT>
@@ -408,7 +412,7 @@ ConfigureThread(const DatasetT& X, const size_t bins_per_row,
   // Partition work
   // Each warp processes a set of training instances applied to a path
   size_t tid = kBlockSize * blockIdx.x + threadIdx.x;
-  const size_t warp_size = WAROP_SIZE;
+  const size_t warp_size = WARP_SIZE;
   size_t warp_rank = tid / warp_size;
   if (warp_rank >= bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp)) {
     *thread_active = false;
@@ -762,8 +766,8 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
       assert(!e.IsRoot() || (x_cond == r_cond));  // These should be the same for the root
 
-      uint32_t s = __popc(x_ballot & ~r_ballot);
-      uint32_t n = __popc(x_ballot ^ r_ballot);
+      uint32_t s = __popcll(x_ballot & ~r_ballot);
+      uint32_t n = __popcll(x_ballot ^ r_ballot);
       float tmp = 0.0f;
 
       // Theorem 1

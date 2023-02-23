@@ -39,6 +39,8 @@
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sort.h>
+
+#include <thrust/system/hip/error.h>
 #include <thrust/system_error.h>
 
 #include <hipcub/hipcub.hpp>
@@ -191,29 +193,9 @@ using RebindVector =
     thrust::device_vector<T,
                           typename DeviceAllocatorT::template rebind<T>::other>;
 
-#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 600 || defined(__clang__)
 __device__ __forceinline__ double atomicAddDouble(double* address, double val) {
   return atomicAdd(address, val);
 }
-#else  // In device code and CUDA < 600
-__device__ __forceinline__ double atomicAddDouble(double* address,
-                                                  double val) {  // NOLINT
-  unsigned long long int* address_as_ull =                       // NOLINT
-      (unsigned long long int*)address;                          // NOLINT
-  unsigned long long int old = *address_as_ull, assumed;         // NOLINT
-
-  do {
-    assumed = old;
-    old = atomicCAS(address_as_ull, assumed,
-                    __double_as_longlong(val + __longlong_as_double(assumed)));
-
-    // Note: uses integer comparison to avoid hang in case of NaN (since NaN !=
-    // NaN)
-  } while (assumed != old);
-
-  return __longlong_as_double(old);
-}
-#endif
 
 // Like a coalesced group, except we can make the assumption that all threads in
 // a group are next to each other. This makes shuffle operations much cheaper.

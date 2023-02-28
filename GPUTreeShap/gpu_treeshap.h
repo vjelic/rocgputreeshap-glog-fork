@@ -827,8 +827,8 @@ void GetBinSegments(const PathVectorT& paths, const SizeVectorT& bin_map,
                          bin_segments->end(), bin_segments->begin());
 }
 
-struct DeduplicateKeyTransformOp {
-  template <typename SplitConditionT>
+template <typename SplitConditionT>
+struct DeduplicateKeyTransformOp : public thrust::unary_function<const PathElement<SplitConditionT>&, thrust::pair<size_t, int64_t>> {
   __device__ thrust::pair<size_t, int64_t> operator()(
       const PathElement<SplitConditionT>& e) {
     return {e.path_idx, e.feature_idx};
@@ -869,7 +869,7 @@ void DeduplicatePaths(PathVectorT* device_paths,
 
   using Pair = thrust::pair<size_t, int64_t>;
   auto key_transform = thrust::make_transform_iterator(
-      device_paths->begin(), DeduplicateKeyTransformOp());
+      device_paths->begin(), DeduplicateKeyTransformOp<SplitConditionT>());
 
   thrust::device_vector<size_t> d_num_runs_out(1);
   size_t* h_num_runs_out;
@@ -1108,22 +1108,22 @@ void PreprocessPaths(PathVectorT* device_paths, PathVectorT* deduplicated_paths,
       *deduplicated_paths, device_bin_map, bin_segments);
 }
 
-struct PathIdxTransformOp {
-  template <typename SplitConditionT>
+template <typename SplitConditionT>
+struct PathIdxTransformOp : public thrust::unary_function<const PathElement<SplitConditionT>&, size_t> {
   __device__ size_t operator()(const PathElement<SplitConditionT>& e) {
     return e.path_idx;
   }
 };
 
-struct GroupIdxTransformOp {
-  template <typename SplitConditionT>
+template <typename SplitConditionT>
+struct GroupIdxTransformOp: public thrust::unary_function<const PathElement<SplitConditionT>&, size_t> {
   __device__ size_t operator()(const PathElement<SplitConditionT>& e) {
     return e.group;
   }
 };
 
-struct BiasTransformOp {
-  template <typename SplitConditionT>
+template <typename SplitConditionT>
+struct BiasTransformOp: public thrust::unary_function<const PathElement<SplitConditionT>&, size_t> {
   __device__ double operator()(const PathElement<SplitConditionT>& e) {
     return e.zero_fraction * e.v;
   }
@@ -1153,7 +1153,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
                });
   // Combine zero fraction for all paths
   auto path_key = thrust::make_transform_iterator(sorted_paths.begin(),
-                                                  PathIdxTransformOp());
+                                                  PathIdxTransformOp<SplitConditionT>());
   PathVectorT combined(sorted_paths.size());
   auto combined_out = thrust::reduce_by_key(
       thrust::hip::par(alloc), path_key, path_key + sorted_paths.size(),
@@ -1171,9 +1171,9 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
   size_vector keys_out(num_paths);
   double_vector values_out(num_paths);
   auto group_key =
-      thrust::make_transform_iterator(combined.begin(), GroupIdxTransformOp());
+      thrust::make_transform_iterator(combined.begin(), GroupIdxTransformOp<SplitConditionT>());
   auto values =
-      thrust::make_transform_iterator(combined.begin(), BiasTransformOp());
+      thrust::make_transform_iterator(combined.begin(), BiasTransformOp<SplitConditionT>());
 
   auto out_itr = thrust::reduce_by_key(thrust::hip::par(alloc), group_key,
                                        group_key + num_paths, values,

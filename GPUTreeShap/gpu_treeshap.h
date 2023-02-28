@@ -416,7 +416,12 @@ ConfigureThread(const DatasetT& X, const size_t bins_per_row,
 }
 
 #define GPUTREESHAP_MAX_THREADS_PER_BLOCK 256
+
+#if WAVEFRONT_SIZE == 64
+#define FULL_MASK 0xffffffffffffffff
+#elif WAVEFRONT_SIZE == 32
 #define FULL_MASK 0xffffffff
+#endif
 
 template <typename DatasetT, size_t kBlockSize, size_t kRowsPerWarp,
           typename SplitConditionT>

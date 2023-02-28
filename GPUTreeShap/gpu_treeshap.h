@@ -49,7 +49,6 @@
 
 #include "amd_warp_primitives.h"
 
-typedef unsigned long long uhipint_t;
 #define WARP_SIZE WAVEFRONT_SIZE
 
 namespace gpu_treeshap {
@@ -76,6 +75,7 @@ struct XgboostSplitCondition {
     if (isnan(x)) {
       return is_missing_branch;
     }
+
     return x >= feature_lower_bound && x < feature_upper_bound;
   }
 
@@ -138,12 +138,14 @@ struct PathElement {
 // Helper function that accepts an index into a flat contiguous array and the
 // dimensions of a tensor and returns the indices with respect to the tensor
 template <typename T, size_t N>
-__device__ void FlatIdxToTensorIdx(T flat_idx, const T (&shape)[N],
-                                   T (&out_idx)[N]) {
+__device__ void FlatIdxToTensorIdx(T flat_idx, const T (&shape)[N], T (&out_idx)[N])
+{
   T current_size = shape[0];
+
   for (auto i = 1ull; i < N; i++) {
     current_size *= shape[i];
   }
+
   for (auto i = 0ull; i < N; i++) {
     current_size /= shape[i];
     out_idx[i] = flat_idx / current_size;
@@ -156,14 +158,18 @@ __device__ void FlatIdxToTensorIdx(T flat_idx, const T (&shape)[N],
 template <typename T, size_t N>
 __device__ T TensorIdxToFlatIdx(const T (&shape)[N], const T (&tensor_idx)[N]) {
   T current_size = shape[0];
+
   for (auto i = 1ull; i < N; i++) {
     current_size *= shape[i];
   }
+
   T idx = 0;
+
   for (auto i = 0ull; i < N; i++) {
     current_size /= shape[i];
     idx += tensor_idx[i] * current_size;
   }
+
   return idx;
 }
 
@@ -190,8 +196,7 @@ namespace detail {
 // Shorthand for creating a device vector with an appropriate allocator type
 template <class T, class DeviceAllocatorT>
 using RebindVector =
-    thrust::device_vector<T,
-                          typename DeviceAllocatorT::template rebind<T>::other>;
+    thrust::device_vector<T, typename DeviceAllocatorT::template rebind<T>::other>;
 
 __device__ __forceinline__ double atomicAddDouble(double* address, double val) {
   return atomicAdd(address, val);
@@ -201,7 +206,7 @@ __device__ __forceinline__ double atomicAddDouble(double* address, double val) {
 // a group are next to each other. This makes shuffle operations much cheaper.
 class ContiguousGroup {
  public:
-  __device__ ContiguousGroup(uhipint_t mask) : mask_(mask) {}
+  __device__ ContiguousGroup(lane_mask mask) : mask_(mask) {}
 
 #if WAVEFRONT_SIZE == 64
   __device__ uint32_t size() const { return __popcll(mask_); }
@@ -216,7 +221,7 @@ class ContiguousGroup {
   __device__ T shfl_up(T val, uint32_t delta) const {
     return __shfl_up_sync(mask_, val, delta);
   }
-  __device__ uhipint_t ballot(int predicate) const {
+  __device__ lane_mask ballot(int predicate) const {
     return __ballot_sync(mask_, predicate) >> (__ffsll(mask_) - 1);
   }
 
@@ -233,7 +238,7 @@ class ContiguousGroup {
   __device__ T shfl_up(T val, uint32_t delta) const {
     return __shfl_up_sync(mask_, val, delta);
   }
-  __device__ uhipint_t ballot(int predicate) const {
+  __device__ lane_mask ballot(int predicate) const {
     return __ballot_sync(mask_, predicate) >> (__ffs(mask_) - 1);
   }
 
@@ -243,23 +248,25 @@ class ContiguousGroup {
   __device__ T reduce(T val, OpT op) {
     for (int i = 1; i < this->size(); i *= 2) {
       T shfl = shfl_up(val, i);
+
       if (static_cast<int>(thread_rank()) - i >= 0) {
         val = op(val, shfl);
       }
     }
+
     return shfl(val, size() - 1);
   }
 
-  uhipint_t mask_;
+  lane_mask mask_;
 };
 
 // Separate the active threads by labels
 // This functionality is available in cuda 11.0 on cc >=7.0
 // We reimplement for backwards compatibility
 // Assumes partitions are contiguous
-inline __device__ ContiguousGroup active_labeled_partition(uhipint_t mask,
+inline __device__ ContiguousGroup active_labeled_partition(lane_mask mask,
                                                            int label) {
-  uhipint_t subgroup_mask = __match_any_sync(mask, label);
+  lane_mask subgroup_mask = __match_any_sync(mask, label);
 
   return ContiguousGroup(subgroup_mask);
 }
@@ -317,16 +324,17 @@ class GroupPath {
     float total = 0.0f;
     const float zero_frac_div_unique_depth = __fdividef(
         zero_one_fraction_[0], static_cast<float>(unique_depth_ + 1));
+
     for (int i = unique_depth_ - 1; i >= 0; i--) {
       float ith_pweight = g_.shfl(pweight_, i);
-      float precomputed =
-          __fmul_rn((unique_depth_ - i), zero_frac_div_unique_depth);
-      const float tmp =
-          __fdividef(__fmul_rn(next_one_portion, unique_depth_ + 1), i + 1);
+      float precomputed = __fmul_rn((unique_depth_ - i), zero_frac_div_unique_depth);
+      const float tmp = __fdividef(__fmul_rn(next_one_portion, unique_depth_ + 1), i + 1);
+
       total = __fmaf_rn(tmp, zero_one_fraction_[1], total);
       next_one_portion = __fmaf_rn(-tmp, precomputed, ith_pweight);
-      float numerator =
-          __fmul_rn(__fsub_rn(1.0f, zero_one_fraction_[1]), ith_pweight);
+
+      float numerator = __fmul_rn(__fsub_rn(1.0f, zero_one_fraction_[1]), ith_pweight);
+
       if (precomputed > 0.0f) {
         total += __fdividef(numerator, precomputed);
       }
@@ -370,9 +378,9 @@ class TaylorGroupPath : GroupPath {
             ith_pweight - tmp * zero_fraction *
                               ((unique_depth_ - i + 1) /
                                static_cast<float>(unique_depth_ + 2));
-      } else if (zero_fraction > 0.0f) {
-        total +=
-            (ith_pweight / zero_fraction) /
+      }
+      else if (zero_fraction > 0.0f) {
+        total += (ith_pweight / zero_fraction) /
             ((unique_depth_ - i + 1) / static_cast<float>(unique_depth_ + 2));
       }
     }
@@ -391,8 +399,7 @@ __device__ float ComputePhi(const PathElement<SplitConditionT>& e,
   size_t unique_path_length = group.size();
 
   // Extend the path
-  for (auto unique_depth = 1ull; unique_depth < unique_path_length;
-       unique_depth++) {
+  for (auto unique_depth = 1ull; unique_depth < unique_path_length; unique_depth++) {
     path.Extend();
   }
 
@@ -416,18 +423,22 @@ ConfigureThread(const DatasetT& X, const size_t bins_per_row,
   size_t tid = kBlockSize * blockIdx.x + threadIdx.x;
   const size_t warp_size = WARP_SIZE;
   size_t warp_rank = tid / warp_size;
+
   if (warp_rank >= bins_per_row * DivRoundUp(X.NumRows(), kRowsPerWarp)) {
     *thread_active = false;
     return;
   }
+
   size_t bin_idx = warp_rank % bins_per_row;
   size_t bank = warp_rank / bins_per_row;
   size_t path_start = bin_segments[bin_idx];
   size_t path_end = bin_segments[bin_idx + 1];
   uint32_t thread_rank = threadIdx.x % warp_size;
+
   if (thread_rank >= path_end - path_start) {
     *thread_active = false;
-  } else {
+  }
+  else {
     *e = path_elements[path_start + thread_rank];
     *start_row = bank * kRowsPerWarp;
     *end_row = min((bank + 1) * kRowsPerWarp, X.NumRows());
@@ -457,10 +468,12 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
   size_t start_row, end_row;
   bool thread_active;
+
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
       &thread_active);
-  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
+
+  lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   float zero_fraction = e.zero_fraction;
@@ -470,9 +483,8 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
     float phi = ComputePhi(e, row_idx, X, labelled_group, zero_fraction);
 
     if (!e.IsRoot()) {
-      atomicAddDouble(&phis[IndexPhi(row_idx, num_groups, e.group, X.NumCols(),
-                                     e.feature_idx)],
-                      phi);
+        atomicAddDouble(&phis[IndexPhi(row_idx, num_groups, e.group, X.NumCols(),
+                    e.feature_idx)], phi);
     }
   }
 }
@@ -512,22 +524,24 @@ __device__ float ComputePhiCondition(const PathElement<SplitConditionT>& e,
 
   // Extend the path
   for (auto i = 1ull; i < unique_path_length; i++) {
-    bool is_condition_feature =
-        group.shfl(e.feature_idx, i) == condition_feature;
+    bool is_condition_feature = group.shfl(e.feature_idx, i) == condition_feature;
     float o_i = group.shfl(one_fraction, i);
     float z_i = group.shfl(e.zero_fraction, i);
 
     if (is_condition_feature) {
       condition_on_fraction = o_i;
       condition_off_fraction = z_i;
-    } else {
+    }
+    else {
       path.Extend();
     }
   }
+
   float sum = path.UnwoundPathSum();
   if (e.feature_idx == condition_feature) {
     return 0.0f;
   }
+
   float phi = sum * (one_fraction - e.zero_fraction) * e.v;
   return phi * (condition_on_fraction - condition_off_fraction) * 0.5f;
 }
@@ -537,7 +551,8 @@ __device__ float ComputePhiCondition(const PathElement<SplitConditionT>& e,
 template <typename SplitConditionT>
 inline __device__ void SwapConditionedElement(
     PathElement<SplitConditionT>** e, PathElement<SplitConditionT>* s_elements,
-    uint32_t condition_rank, const ContiguousGroup& group) {
+    uint32_t condition_rank, const ContiguousGroup& group)
+{
   auto last_rank = group.size() - 1;
   auto this_rank = group.thread_rank();
   if (this_rank == last_rank) {
@@ -565,7 +580,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
-  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
+  lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e->path_idx);
@@ -609,7 +624,8 @@ void ComputeShapInteractions(
     const thrust::device_vector<size_t, SizeTAllocatorT>& bin_segments,
     const thrust::device_vector<PathElement<SplitConditionT>, PathAllocatorT>&
         path_elements,
-    size_t num_groups, double* phis) {
+    size_t num_groups, double* phis)
+{
   size_t bins_per_row = bin_segments.size() - 1;
   const int kBlockThreads = GPUTREESHAP_MAX_THREADS_PER_BLOCK;
   const int warps_per_block = kBlockThreads / WARP_SIZE;
@@ -631,55 +647,59 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
         DatasetT X, size_t bins_per_row,
         const PathElement<SplitConditionT>* path_elements,
         const size_t* bin_segments, size_t num_groups,
-        double* phis_interactions) {
+        double* phis_interactions)
+{
   // Use shared memory for structs, otherwise nvcc puts in local memory
   __shared__ DatasetT s_X;
+
   if (threadIdx.x == 0) {
     s_X = X;
   }
   __syncthreads();
+
   __shared__ PathElement<SplitConditionT> s_elements[kBlockSize];
   PathElement<SplitConditionT>* e = &s_elements[threadIdx.x];
 
   size_t start_row, end_row;
   bool thread_active;
+
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
       s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
-  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
+
+  lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
+
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e->path_idx);
 
   for (int64_t row_idx = start_row; row_idx < end_row; row_idx++) {
-    for (auto condition_rank = 1ull; condition_rank < labelled_group.size();
-         condition_rank++) {
+    for (auto condition_rank = 1ull; condition_rank < labelled_group.size(); condition_rank++) {
       e = &s_elements[threadIdx.x];
+
       // Compute the diagonal terms
       // TODO(Rory): this can be more efficient
-      float reduce_input =
-          e->IsRoot() || labelled_group.thread_rank() == condition_rank
-              ? 1.0f
-              : e->zero_fraction;
-      float reduce =
-          labelled_group.reduce(reduce_input, thrust::multiplies<float>());
+      float reduce_input = e->IsRoot() || labelled_group.thread_rank() == condition_rank
+              ? 1.0f : e->zero_fraction;
+
+      float reduce = labelled_group.reduce(reduce_input, thrust::multiplies<float>());
+
       if (labelled_group.thread_rank() == condition_rank) {
         float one_fraction = e->split_condition.EvaluateSplit(
             X.GetElement(row_idx, e->feature_idx));
-        auto phi_offset =
-            IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
+
+        auto phi_offset = IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                  e->feature_idx, e->feature_idx);
         atomicAddDouble(phis_interactions + phi_offset,
                         reduce * (one_fraction - e->zero_fraction) * e->v);
       }
 
-      int64_t condition_feature =
-          labelled_group.shfl(e->feature_idx, condition_rank);
+      int64_t condition_feature = labelled_group.shfl(e->feature_idx, condition_rank);
 
       SwapConditionedElement(&e, s_elements, condition_rank, labelled_group);
 
-      float x = ComputePhiCondition<TaylorGroupPath>(
-          *e, row_idx, X, labelled_group, condition_feature);
+      float x = ComputePhiCondition<TaylorGroupPath>(*e, row_idx, X, labelled_group, condition_feature);
+
       if (!e->IsRoot()) {
         auto phi_offset =
             IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
@@ -757,7 +777,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
       &thread_active);
 
-  uhipint_t mask = __ballot_sync(FULL_MASK, thread_active);
+  lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e.path_idx);
@@ -765,11 +785,11 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
   for (int64_t x_idx = start_row; x_idx < end_row; x_idx++) {
     float result = 0.0f;
     bool x_cond = e.EvaluateSplit(X, x_idx);
-    uhipint_t x_ballot = labelled_group.ballot(x_cond);
+    lane_mask x_ballot = labelled_group.ballot(x_cond);
 
     for (int64_t r_idx = 0; r_idx < R.NumRows(); r_idx++) {
       bool r_cond = e.EvaluateSplit(R, r_idx);
-      uhipint_t r_ballot = labelled_group.ballot(r_cond);
+      lane_mask r_ballot = labelled_group.ballot(r_cond);
 
       assert(!e.IsRoot() || (x_cond == r_cond));  // These should be the same for the root
 
@@ -806,9 +826,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       // Root writes bias
       auto feature = e.IsRoot() ? X.NumCols() : e.feature_idx;
 
-      atomicAddDouble(
-          &phis[IndexPhi(x_idx, num_groups, e.group, X.NumCols(), feature)],
-          result * e.v);
+      atomicAddDouble(&phis[IndexPhi(x_idx, num_groups, e.group, X.NumCols(), feature)], result * e.v);
     }
   }
 }
@@ -841,27 +859,30 @@ void GetBinSegments(const PathVectorT& paths, const SizeVectorT& bin_map,
   DeviceAllocatorT alloc;
   size_t num_bins =
       thrust::reduce(thrust::hip::par(alloc), bin_map.begin(), bin_map.end(),
-                     size_t(0), thrust::maximum<size_t>()) +
-      1;
+                     size_t(0), thrust::maximum<size_t>()) + 1;
+
   bin_segments->resize(num_bins + 1, 0);
+
   auto counting = thrust::make_counting_iterator(0llu);
   auto d_paths = paths.data().get();
   auto d_bin_segments = bin_segments->data().get();
   auto d_bin_map = bin_map.data();
+
   thrust::for_each_n(counting, paths.size(), [=] __device__(size_t idx) {
     auto path_idx = d_paths[idx].path_idx;
     atomicAdd(reinterpret_cast<unsigned long long*>(d_bin_segments) +  // NOLINT
                   d_bin_map[path_idx],
               1);
   });
+
   thrust::exclusive_scan(thrust::hip::par(alloc), bin_segments->begin(),
                          bin_segments->end(), bin_segments->begin());
 }
 
 template <typename SplitConditionT>
-struct DeduplicateKeyTransformOp : public thrust::unary_function<const PathElement<SplitConditionT>&, thrust::pair<size_t, int64_t>> {
-  __device__ thrust::pair<size_t, int64_t> operator()(
-      const PathElement<SplitConditionT>& e) {
+struct DeduplicateKeyTransformOp : public thrust::unary_function<const PathElement<SplitConditionT>&, thrust::pair<size_t, int64_t>>
+{
+  __device__ thrust::pair<size_t, int64_t> operator()(const PathElement<SplitConditionT>& e) {
     return {e.path_idx, e.feature_idx};
   }
 };
@@ -913,13 +934,17 @@ void DeduplicatePaths(PathVectorT* device_paths,
     a.zero_fraction *= b.zero_fraction;
     return a;
   };  // NOLINT
+
   size_t temp_size = 0;
+
   CheckCuda(hipcub::DeviceReduce::ReduceByKey(
       nullptr, temp_size, key_transform, DiscardOverload<Pair>(),
       device_paths->begin(), deduplicated_paths->begin(),
       d_num_runs_out.begin(), combine, device_paths->size()));
+
   using TempAlloc = RebindVector<char, DeviceAllocatorT>;
   TempAlloc tmp(temp_size);
+
   CheckCuda(hipcub::DeviceReduce::ReduceByKey(
       tmp.data().get(), temp_size, key_transform, DiscardOverload<Pair>(),
       device_paths->begin(), deduplicated_paths->begin(),
@@ -933,7 +958,8 @@ void DeduplicatePaths(PathVectorT* device_paths,
 
 template <typename PathVectorT, typename SplitConditionT, typename SizeVectorT,
           typename DeviceAllocatorT>
-void SortPaths(PathVectorT* paths, const SizeVectorT& bin_map) {
+void SortPaths(PathVectorT* paths, const SizeVectorT& bin_map)
+{
   auto d_bin_map = bin_map.data();
   DeviceAllocatorT alloc;
   thrust::sort(thrust::hip::par(alloc), paths->begin(), paths->end(),
@@ -967,10 +993,11 @@ struct BFDCompare {
 // Best Fit Decreasing bin packing
 // Efficient O(nlogn) implementation with balanced tree using std::set
 template <typename IntVectorT>
-std::vector<size_t> BFDBinPacking(const IntVectorT& counts,
-                                  int bin_limit = WARP_SIZE) {
+std::vector<size_t> BFDBinPacking(const IntVectorT& counts, int bin_limit = WARP_SIZE)
+{
   thrust::host_vector<int> counts_host(counts);
   std::vector<kv> path_lengths(counts_host.size());
+
   for (auto i = 0ull; i < counts_host.size(); i++) {
     path_lengths[i] = {i, counts_host[i]};
   }
@@ -984,16 +1011,20 @@ std::vector<size_t> BFDBinPacking(const IntVectorT& counts,
   // map unique_id -> bin
   std::vector<size_t> bin_map(counts_host.size());
   std::set<kv, BFDCompare> bin_capacities;
+
   bin_capacities.insert({bin_capacities.size(), bin_limit});
+
   for (auto pair : path_lengths) {
     int new_size = pair.second;
     auto itr = bin_capacities.lower_bound({0, new_size});
+
     // Does not fit in any bin
     if (itr == bin_capacities.end()) {
       size_t new_bin_idx = bin_capacities.size();
       bin_capacities.insert({new_bin_idx, bin_limit - new_size});
       bin_map[pair.first] = new_bin_idx;
-    } else {
+    }
+    else {
       kv entry = *itr;
       entry.second -= new_size;
       bin_map[pair.first] = entry.first;
@@ -1008,13 +1039,15 @@ std::vector<size_t> BFDBinPacking(const IntVectorT& counts,
 // First Fit Decreasing bin packing
 // Inefficient O(n^2) implementation
 template <typename IntVectorT>
-std::vector<size_t> FFDBinPacking(const IntVectorT& counts,
-                                  int bin_limit = WARP_SIZE) {
+std::vector<size_t> FFDBinPacking(const IntVectorT& counts, int bin_limit = WARP_SIZE)
+{
   thrust::host_vector<int> counts_host(counts);
   std::vector<kv> path_lengths(counts_host.size());
+
   for (auto i = 0ull; i < counts_host.size(); i++) {
     path_lengths[i] = {i, counts_host[i]};
   }
+
   std::sort(path_lengths.begin(), path_lengths.end(),
             [&](const kv& a, const kv& b) {
               std::greater<> op;
@@ -1024,8 +1057,10 @@ std::vector<size_t> FFDBinPacking(const IntVectorT& counts,
   // map unique_id -> bin
   std::vector<size_t> bin_map(counts_host.size());
   std::vector<int> bin_capacities(path_lengths.size(), bin_limit);
+
   for (auto pair : path_lengths) {
     int new_size = pair.second;
+
     for (auto j = 0ull; j < bin_capacities.size(); j++) {
       int& capacity = bin_capacities[j];
 
@@ -1043,36 +1078,40 @@ std::vector<size_t> FFDBinPacking(const IntVectorT& counts,
 // Next Fit bin packing
 // O(n) implementation
 template <typename IntVectorT>
-std::vector<size_t> NFBinPacking(const IntVectorT& counts, int bin_limit = WARP_SIZE) {
+std::vector<size_t> NFBinPacking(const IntVectorT& counts, int bin_limit = WARP_SIZE)
+{
   thrust::host_vector<int> counts_host(counts);
   std::vector<size_t> bin_map(counts_host.size());
   size_t current_bin = 0;
   int current_capacity = bin_limit;
+
   for (auto i = 0ull; i < counts_host.size(); i++) {
     int new_size = counts_host[i];
     size_t path_idx = i;
+
     if (new_size <= current_capacity) {
       current_capacity -= new_size;
       bin_map[path_idx] = current_bin;
-    } else {
+    }
+    else {
       current_capacity = bin_limit - new_size;
       bin_map[path_idx] = ++current_bin;
     }
   }
+
   return bin_map;
 }
 
 template <typename DeviceAllocatorT, typename SplitConditionT,
           typename PathVectorT, typename LengthVectorT>
-void GetPathLengths(const PathVectorT& device_paths,
-                    LengthVectorT* path_lengths) {
-  path_lengths->resize(
-      static_cast<PathElement<SplitConditionT>>(device_paths.back()).path_idx +
-          1,
-      0);
+void GetPathLengths(const PathVectorT& device_paths, LengthVectorT* path_lengths)
+{
+  path_lengths->resize(static_cast<PathElement<SplitConditionT>>(device_paths.back()).path_idx + 1, 0);
+
   auto counting = thrust::make_counting_iterator(0llu);
   auto d_paths = device_paths.data().get();
   auto d_lengths = path_lengths->data().get();
+
   thrust::for_each_n(counting, device_paths.size(), [=] __device__(size_t idx) {
     auto path_idx = d_paths[idx].path_idx;
     atomicAdd(d_lengths + path_idx, 1ull);
@@ -1099,8 +1138,7 @@ void ValidatePaths(const PathVectorT& device_paths,
                    const LengthVectorT& path_lengths) {
   DeviceAllocatorT alloc;
   PathTooLongOp too_long_op;
-  auto invalid_length =
-      thrust::any_of(thrust::hip::par(alloc), path_lengths.begin(),
+  auto invalid_length = thrust::any_of(thrust::hip::par(alloc), path_lengths.begin(),
                      path_lengths.end(), too_long_op);
 
   if (invalid_length) {
@@ -1109,8 +1147,7 @@ void ValidatePaths(const PathVectorT& device_paths,
 
   IncorrectVOp<SplitConditionT> incorrect_v_op{device_paths.data().get()};
   auto counting = thrust::counting_iterator<size_t>(0);
-  auto incorrect_v =
-      thrust::any_of(thrust::hip::par(alloc), counting + 1,
+  auto incorrect_v = thrust::any_of(thrust::hip::par(alloc), counting + 1,
                      counting + device_paths.size(), incorrect_v_op);
 
   if (incorrect_v) {
@@ -1164,7 +1201,8 @@ struct BiasTransformOp: public thrust::unary_function<const PathElement<SplitCon
 // using double precision to avoid numerical stability issues
 template <typename PathVectorT, typename DoubleVectorT,
           typename DeviceAllocatorT, typename SplitConditionT>
-void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
+void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias)
+{
   using double_vector = thrust::device_vector<
       double, typename DeviceAllocatorT::template rebind<double>::other>;
   PathVectorT sorted_paths(device_paths);
@@ -1182,6 +1220,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
 
                  return false;
                });
+
   // Combine zero fraction for all paths
   auto path_key = thrust::make_transform_iterator(sorted_paths.begin(),
                                                   PathIdxTransformOp<SplitConditionT>());
@@ -1195,20 +1234,18 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
         a.zero_fraction *= b.zero_fraction;
         return a;
       });
+
   size_t num_paths = combined_out.second - combined.begin();
   // Combine bias for each path, over each group
   using size_vector = thrust::device_vector<
       size_t, typename DeviceAllocatorT::template rebind<size_t>::other>;
   size_vector keys_out(num_paths);
   double_vector values_out(num_paths);
-  auto group_key =
-      thrust::make_transform_iterator(combined.begin(), GroupIdxTransformOp<SplitConditionT>());
-  auto values =
-      thrust::make_transform_iterator(combined.begin(), BiasTransformOp<SplitConditionT>());
+  auto group_key = thrust::make_transform_iterator(combined.begin(), GroupIdxTransformOp<SplitConditionT>());
+  auto values = thrust::make_transform_iterator(combined.begin(), BiasTransformOp<SplitConditionT>());
 
   auto out_itr = thrust::reduce_by_key(thrust::hip::par(alloc), group_key,
-                                       group_key + num_paths, values,
-                                       keys_out.begin(), values_out.begin());
+          group_key + num_paths, values, keys_out.begin(), values_out.begin());
 
   // Write result
   size_t n = out_itr.first - keys_out.begin();
@@ -1216,6 +1253,7 @@ void ComputeBias(const PathVectorT& device_paths, DoubleVectorT* bias) {
   auto d_keys_out = keys_out.data().get();
   auto d_values_out = values_out.data().get();
   auto d_bias = bias->data().get();
+
   thrust::for_each_n(counting, n, [=] __device__(size_t idx) {
     d_bias[d_keys_out[idx]] = d_values_out[idx];
   });
@@ -1284,35 +1322,36 @@ void GPUTreeShap(DatasetT X, PathIteratorT begin, PathIteratorT end,
   using size_vector = detail::RebindVector<size_t, DeviceAllocatorT>;
   using double_vector = detail::RebindVector<double, DeviceAllocatorT>;
   using path_vector = detail::RebindVector<
-      typename std::iterator_traits<PathIteratorT>::value_type,
-      DeviceAllocatorT>;
-  using split_condition =
-      typename std::iterator_traits<PathIteratorT>::value_type::split_type;
+      typename std::iterator_traits<PathIteratorT>::value_type, DeviceAllocatorT>;
+  using split_condition = typename std::iterator_traits<PathIteratorT>::value_type::split_type;
 
   // Compute the global bias
   double_vector temp_phi(phis_end - phis_begin, 0.0);
   path_vector device_paths(begin, end);
   double_vector bias(num_groups, 0.0);
+
   detail::ComputeBias<path_vector, double_vector, DeviceAllocatorT,
                       split_condition>(device_paths, &bias);
   auto d_bias = bias.data().get();
   auto d_temp_phi = temp_phi.data().get();
+
   thrust::for_each_n(thrust::make_counting_iterator(0llu),
                      X.NumRows() * num_groups, [=] __device__(size_t idx) {
                        size_t group = idx % num_groups;
                        size_t row_idx = idx / num_groups;
                        d_temp_phi[IndexPhi(row_idx, num_groups, group,
-                                           X.NumCols(), X.NumCols())] +=
-                           d_bias[group];
+                               X.NumCols(), X.NumCols())] +=
+                       d_bias[group];
                      });
 
   path_vector deduplicated_paths;
   size_vector device_bin_segments;
+
   detail::PreprocessPaths<DeviceAllocatorT, split_condition>(
       &device_paths, &deduplicated_paths, &device_bin_segments);
 
   detail::ComputeShap(X, device_bin_segments, deduplicated_paths, num_groups,
-                      temp_phi.data().get());
+          temp_phi.data().get());
   thrust::copy(temp_phi.begin(), temp_phi.end(), phis_begin);
 }
 
@@ -1377,10 +1416,13 @@ void GPUTreeShapInteractions(DatasetT X, PathIteratorT begin, PathIteratorT end,
   double_vector temp_phi(phis_end - phis_begin, 0.0);
   path_vector device_paths(begin, end);
   double_vector bias(num_groups, 0.0);
+
   detail::ComputeBias<path_vector, double_vector, DeviceAllocatorT,
                       split_condition>(device_paths, &bias);
+
   auto d_bias = bias.data().get();
   auto d_temp_phi = temp_phi.data().get();
+
   thrust::for_each_n(
       thrust::make_counting_iterator(0llu), X.NumRows() * num_groups,
       [=] __device__(size_t idx) {
@@ -1397,7 +1439,7 @@ void GPUTreeShapInteractions(DatasetT X, PathIteratorT begin, PathIteratorT end,
       &device_paths, &deduplicated_paths, &device_bin_segments);
 
   detail::ComputeShapInteractions(X, device_bin_segments, deduplicated_paths,
-                                  num_groups, temp_phi.data().get());
+          num_groups, temp_phi.data().get());
   thrust::copy(temp_phi.begin(), temp_phi.end(), phis_begin);
 }
 
@@ -1468,10 +1510,13 @@ void GPUTreeShapTaylorInteractions(DatasetT X, PathIteratorT begin,
   double_vector temp_phi(phis_end - phis_begin, 0.0);
   path_vector device_paths(begin, end);
   double_vector bias(num_groups, 0.0);
+
   detail::ComputeBias<path_vector, double_vector, DeviceAllocatorT,
-                      split_condition>(device_paths, &bias);
+      split_condition>(device_paths, &bias);
+
   auto d_bias = bias.data().get();
   auto d_temp_phi = temp_phi.data().get();
+
   thrust::for_each_n(
       thrust::make_counting_iterator(0llu), X.NumRows() * num_groups,
       [=] __device__(size_t idx) {
@@ -1528,7 +1573,8 @@ template <typename DeviceAllocatorT = thrust::device_allocator<int>,
           typename DatasetT, typename PathIteratorT, typename PhiIteratorT>
 void GPUTreeShapInterventional(DatasetT X, DatasetT R, PathIteratorT begin,
                                PathIteratorT end, size_t num_groups,
-                               PhiIteratorT phis_begin, PhiIteratorT phis_end) {
+                               PhiIteratorT phis_begin, PhiIteratorT phis_end)
+{
   if (X.NumRows() == 0 || X.NumCols() == 0 || end - begin <= 0) return;
 
   if (size_t(phis_end - phis_begin) <
@@ -1541,16 +1587,15 @@ void GPUTreeShapInterventional(DatasetT X, DatasetT R, PathIteratorT begin,
   using size_vector = detail::RebindVector<size_t, DeviceAllocatorT>;
   using double_vector = detail::RebindVector<double, DeviceAllocatorT>;
   using path_vector = detail::RebindVector<
-      typename std::iterator_traits<PathIteratorT>::value_type,
-      DeviceAllocatorT>;
-  using split_condition =
-      typename std::iterator_traits<PathIteratorT>::value_type::split_type;
+      typename std::iterator_traits<PathIteratorT>::value_type, DeviceAllocatorT>;
+  using split_condition = typename std::iterator_traits<PathIteratorT>::value_type::split_type;
 
   double_vector temp_phi(phis_end - phis_begin, 0.0);
   path_vector device_paths(begin, end);
 
   path_vector deduplicated_paths;
   size_vector device_bin_segments;
+
   detail::PreprocessPaths<DeviceAllocatorT, split_condition>(
       &device_paths, &deduplicated_paths, &device_bin_segments);
   detail::ComputeShapInterventional(X, R, device_bin_segments,

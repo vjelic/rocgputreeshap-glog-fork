@@ -203,6 +203,7 @@ class ContiguousGroup {
  public:
   __device__ ContiguousGroup(uhipint_t mask) : mask_(mask) {}
 
+#if WAVEFRONT_SIZE == 64
   __device__ uint32_t size() const { return __popcll(mask_); }
   __device__ uint32_t thread_rank() const {
     return __popcll(mask_ & __lanemask_lt());
@@ -218,6 +219,25 @@ class ContiguousGroup {
   __device__ uhipint_t ballot(int predicate) const {
     return __ballot_sync(mask_, predicate) >> (__ffsll(mask_) - 1);
   }
+
+#elif WAVEFRONT_SIZE == 32
+  __device__ uint32_t size() const { return __popc(mask_); }
+  __device__ uint32_t thread_rank() const {
+    return __popc(mask_ & __lanemask_lt());
+  }
+  template <typename T>
+  __device__ T shfl(T val, uint32_t src) const {
+    return __shfl_sync(mask_, val, src + __ffs(mask_) - 1);
+  }
+  template <typename T>
+  __device__ T shfl_up(T val, uint32_t delta) const {
+    return __shfl_up_sync(mask_, val, delta);
+  }
+  __device__ uhipint_t ballot(int predicate) const {
+    return __ballot_sync(mask_, predicate) >> (__ffs(mask_) - 1);
+  }
+
+#endif
 
   template <typename T, typename OpT>
   __device__ T reduce(T val, OpT op) {
@@ -753,8 +773,14 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
       assert(!e.IsRoot() || (x_cond == r_cond));  // These should be the same for the root
 
+#if WAVEFRONT_SIZE == 64
       uint32_t s = __popcll(x_ballot & ~r_ballot);
       uint32_t n = __popcll(x_ballot ^ r_ballot);
+#elif WAVEFRONT_SIZE == 32
+      uint32_t s = __popc(x_ballot & ~r_ballot);
+      uint32_t n = __popc(x_ballot ^ r_ballot);
+#endif
+
       float tmp = 0.0f;
 
       // Theorem 1

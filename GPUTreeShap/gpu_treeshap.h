@@ -232,14 +232,14 @@ class ContiguousGroup {
   }
   template <typename T>
   __device__ T shfl(T val, uint32_t src) const {
-    return __shfl_sync(mask_, val, src + __ffs(mask_) - 1);
+    return __shfl_sync(mask_, val, src + __ffs((lane_mask)mask_) - 1);
   }
   template <typename T>
   __device__ T shfl_up(T val, uint32_t delta) const {
     return __shfl_up_sync(mask_, val, delta);
   }
   __device__ lane_mask ballot(int predicate) const {
-    return __ballot_sync(mask_, predicate) >> (__ffs(mask_) - 1);
+    return __ballot_sync(mask_, predicate) >> (__ffs((lane_mask)mask_) - 1);
   }
 
 #endif

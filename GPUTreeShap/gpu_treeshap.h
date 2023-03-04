@@ -53,6 +53,8 @@
 
 namespace gpu_treeshap {
 
+using namespace hip_warp_primitives;
+
 struct XgboostSplitCondition {
   XgboostSplitCondition() = default;
   XgboostSplitCondition(float feature_lower_bound, float feature_upper_bound,
@@ -197,10 +199,6 @@ namespace detail {
 template <class T, class DeviceAllocatorT>
 using RebindVector =
     thrust::device_vector<T, typename DeviceAllocatorT::template rebind<T>::other>;
-
-__device__ __forceinline__ double atomicAddDouble(double* address, double val) {
-  return atomicAdd(address, val);
-}
 
 // Like a coalesced group, except we can make the assumption that all threads in
 // a group are next to each other. This makes shuffle operations much cheaper.
@@ -483,7 +481,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
     float phi = ComputePhi(e, row_idx, X, labelled_group, zero_fraction);
 
     if (!e.IsRoot()) {
-        atomicAddDouble(&phis[IndexPhi(row_idx, num_groups, e.group, X.NumCols(),
+        atomicAdd(&phis[IndexPhi(row_idx, num_groups, e.group, X.NumCols(),
                     e.feature_idx)], phi);
     }
   }
@@ -591,7 +589,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       auto phi_offset =
           IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                e->feature_idx, e->feature_idx);
-      atomicAddDouble(phis_interactions + phi_offset, phi);
+      atomicAdd(phis_interactions + phi_offset, phi);
     }
 
     for (auto condition_rank = 1ull; condition_rank < labelled_group.size();
@@ -606,12 +604,12 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
         auto phi_offset =
             IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                  e->feature_idx, condition_feature);
-        atomicAddDouble(phis_interactions + phi_offset, x);
+        atomicAdd(phis_interactions + phi_offset, x);
         // Subtract effect from diagonal
         auto phi_diag =
             IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                  e->feature_idx, e->feature_idx);
-        atomicAddDouble(phis_interactions + phi_diag, -x);
+        atomicAdd(phis_interactions + phi_diag, -x);
       }
     }
   }
@@ -690,7 +688,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
         auto phi_offset = IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                  e->feature_idx, e->feature_idx);
-        atomicAddDouble(phis_interactions + phi_offset,
+        atomicAdd(phis_interactions + phi_offset,
                         reduce * (one_fraction - e->zero_fraction) * e->v);
       }
 
@@ -704,7 +702,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
         auto phi_offset =
             IndexPhiInteractions(row_idx, num_groups, e->group, X.NumCols(),
                                  e->feature_idx, condition_feature);
-        atomicAddDouble(phis_interactions + phi_offset, x);
+        atomicAdd(phis_interactions + phi_offset, x);
       }
     }
   }
@@ -826,7 +824,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       // Root writes bias
       auto feature = e.IsRoot() ? X.NumCols() : e.feature_idx;
 
-      atomicAddDouble(&phis[IndexPhi(x_idx, num_groups, e.group, X.NumCols(), feature)], result * e.v);
+      atomicAdd(&phis[IndexPhi(x_idx, num_groups, e.group, X.NumCols(), feature)], result * e.v);
     }
   }
 }
@@ -1119,7 +1117,7 @@ void GetPathLengths(const PathVectorT& device_paths, LengthVectorT* path_lengths
 }
 
 struct PathTooLongOp {
-  __device__ size_t operator()(size_t length) { return length > 32; }
+  __device__ size_t operator()(size_t length) { return length > WARP_SIZE; }
 };
 
 template <typename SplitConditionT>
@@ -1142,7 +1140,11 @@ void ValidatePaths(const PathVectorT& device_paths,
                      path_lengths.end(), too_long_op);
 
   if (invalid_length) {
+#if WAVEFRONT_SIZE == 64
+    throw std::invalid_argument("Tree depth must be < 64");
+#elif WAVEFRONT_SIZE == 32
     throw std::invalid_argument("Tree depth must be < 32");
+#endif
   }
 
   IncorrectVOp<SplitConditionT> incorrect_v_op{device_paths.data().get()};
@@ -1191,7 +1193,7 @@ struct GroupIdxTransformOp: public thrust::unary_function<const PathElement<Spli
 };
 
 template <typename SplitConditionT>
-struct BiasTransformOp: public thrust::unary_function<const PathElement<SplitConditionT>&, size_t> {
+struct BiasTransformOp: public thrust::unary_function<const PathElement<SplitConditionT>&, double> {
   __device__ double operator()(const PathElement<SplitConditionT>& e) {
     return e.zero_fraction * e.v;
   }

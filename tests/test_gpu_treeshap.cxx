@@ -1,4 +1,3 @@
-#include "hip/hip_runtime.h"
 /*
  * Copyright (c) 2020, NVIDIA CORPORATION.
  *
@@ -15,6 +14,7 @@
  * limitations under the License.
  */
 
+#include "hip/hip_runtime.h"
 #include <gpu_treeshap.h>
 
 #include <thrust/device_vector.h>

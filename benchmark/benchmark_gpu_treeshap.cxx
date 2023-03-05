@@ -13,7 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include <GPUTreeShap/gpu_treeshap.h>
+#include <gpu_treeshap.h>
 
 #include <thrust/device_vector.h>
 

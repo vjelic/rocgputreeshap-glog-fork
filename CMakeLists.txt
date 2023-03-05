@@ -24,15 +24,11 @@ include_directories(${HIP_INCLUDE_DIRS}/hip)
 include_directories("warp-primitives/include")
 message(STATUS "HIP include found in: ${HIP_INCLUDE_DIRS}")
 
-set(CMAKE_HIP_FLAGS "-std=c++14")
-
-#add_compile_options($<$<COMPILE_LANGUAGE:HIP>:-std=c++14>)
-
 # GPUTreeSHAP target is header-only
 add_library(GPUTreeShap INTERFACE)
 add_library(GPUTreeShap::GPUTreeShap ALIAS GPUTreeShap)
 target_sources(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR}/GPUTreeShap/gpu_treeshap.h)
-target_include_directories(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR})
+target_include_directories(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR}/GPUTreeShap)
 
 if(BUILD_GTEST)
   set(gtest_force_shared_crt ON CACHE BOOL "Always use msvcrt.dll")
@@ -43,11 +39,11 @@ if(BUILD_GTEST)
     GIT_SHALLOW       true
   )
   FetchContent_MakeAvailable(googletest)
-  add_executable(TestGPUTreeShap tests/test_gpu_treeshap.cu)
+  add_executable(TestGPUTreeShap tests/test_gpu_treeshap.cxx)
   target_link_libraries(TestGPUTreeShap PRIVATE GPUTreeShap)
-  target_compile_options(TestGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:HIP>: ${COMPILE_OPTIONS}>)
+  target_compile_options(TestGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:CXX>: ${COMPILE_OPTIONS}>)
   if(NOT MSVC)
-    target_compile_options(TestGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GCC_COMPILE_OPTIONS}>)
+      target_compile_options(TestGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${GCC_COMPILE_OPTIONS}>)
   else()
   endif()
   target_link_libraries(TestGPUTreeShap  PRIVATE gtest gtest_main)
@@ -55,14 +51,14 @@ endif()
 
 if(BUILD_EXAMPLES)
     set(exam_src example/example.cxx)
-    set_source_files_properties(${exam_src} PROPERTIES LANGUAGE HIP)
+    set_source_files_properties(${exam_src} PROPERTIES LANGUAGE CXX)
     add_executable(GPUTreeShapExample ${exam_src})
 
-    set_target_properties(GPUTreeShapExample PROPERTIES LINKER_LANGUAGE HIP)
+    set_target_properties(GPUTreeShapExample PROPERTIES LINKER_LANGUAGE  CXX)
     target_link_libraries(GPUTreeShapExample PRIVATE GPUTreeShap)
-    target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${COMPILE_OPTIONS}>)
+    target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${COMPILE_OPTIONS}>)
     if(NOT MSVC)
-        target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GCC_COMPILE_OPTIONS}>)
+        target_compile_options(GPUTreeShapExample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${GCC_COMPILE_OPTIONS}>)
     endif()
 endif()
 
@@ -70,16 +66,16 @@ if(BUILD_BENCHMARKS)
   FetchContent_Declare(
     benchmark
     GIT_REPOSITORY https://github.com/google/benchmark.git
-    GIT_TAG        v1.5.2
+    GIT_TAG        v1.7.1
     GIT_SHALLOW       true
   )
   set(BENCHMARK_ENABLE_TESTING OFF CACHE INTERNAL "Google benchmark tests off")
   FetchContent_MakeAvailable(benchmark)
-  add_executable(BenchmarkGPUTreeShap benchmark/benchmark_gpu_treeshap.cu)
+  add_executable(BenchmarkGPUTreeShap benchmark/benchmark_gpu_treeshap.cxx)
   target_link_libraries(BenchmarkGPUTreeShap PRIVATE GPUTreeShap)
-  target_compile_options(BenchmarkGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:HIP>: ${COMPILE_OPTIONS}>)
+  target_compile_options(BenchmarkGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:CXX>: ${COMPILE_OPTIONS}>)
   if(NOT MSVC)
-    target_compile_options(BenchmarkGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:HIP>:${GCC_COMPILE_OPTIONS}>)
+      target_compile_options(BenchmarkGPUTreeShap PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${GCC_COMPILE_OPTIONS}>)
   endif()
   target_link_libraries(BenchmarkGPUTreeShap  PRIVATE benchmark::benchmark)
 endif()

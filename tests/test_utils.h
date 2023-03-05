@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 #pragma once
-#include <GPUTreeShap/gpu_treeshap.h>
+
+#include <gpu_treeshap.h>
 
 #include <thrust/device_vector.h>
 

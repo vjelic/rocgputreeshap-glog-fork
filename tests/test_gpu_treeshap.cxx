@@ -1,3 +1,4 @@
+#include "hip/hip_runtime.h"
 /*
  * Copyright (c) 2020, NVIDIA CORPORATION.
  *
@@ -14,8 +15,7 @@
  * limitations under the License.
  */
 
-#include <GPUTreeShap/gpu_treeshap.h>
-#include <cooperative_groups.h>
+#include <gpu_treeshap.h>
 
 #include <thrust/device_vector.h>
 #include <thrust/equal.h>
@@ -26,8 +26,7 @@
 #include <random>
 #include <vector>
 #include "gtest/gtest.h"
-#include "tests/test_utils.h"
-#include "../GPUTreeShap/gpu_treeshap.h"
+#include "../tests/test_utils.h"
 
 using namespace gpu_treeshap;  // NOLINT
 
@@ -657,7 +656,7 @@ __global__ void TestActiveLabeledPartition() {
 
 TEST(GPUTreeShap, ActiveLabeledPartition) {
   TestActiveLabeledPartition<<<1, 32>>>();
-  EXPECT_EQ(cudaDeviceSynchronize(), 0);
+  EXPECT_EQ(hipDeviceSynchronize(), 0);
 }
 
 TEST(GPUTreeShap, BFDBinPacking) {
@@ -735,7 +734,7 @@ __global__ void TestContiguousGroup() {
   if (label == 1) {
     assert(group.size() == 3);
     assert(group.thread_rank() == threadIdx.x - 3);
-    int up = group.shfl_up(threadIdx.x, 1);
+    int up = group.shfl_up<int>(threadIdx.x, 1);
     if (group.thread_rank() > 0) {
       assert(up == threadIdx.x - 1);
     }
@@ -745,7 +744,7 @@ __global__ void TestContiguousGroup() {
 
 TEST(GPUTreeShap, ContiguousGroup) {
   TestContiguousGroup<<<1, 32>>>();
-  EXPECT_EQ(cudaDeviceSynchronize(), 0);
+  EXPECT_EQ(hipDeviceSynchronize(), 0);
 }
 
 class DeterminismTest : public ::testing::Test {

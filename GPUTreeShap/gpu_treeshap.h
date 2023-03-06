@@ -49,7 +49,11 @@
 
 #include "amd_warp_primitives.h"
 
-#define WARP_SIZE WAVEFRONT_SIZE
+#if WAVEFRONT_SIZE == 64
+#define WARP_SIZE 64
+#elif WAVEFRONT_SIZE == 32
+#define WARP_SIZE 32
+#endif
 
 namespace gpu_treeshap {
 

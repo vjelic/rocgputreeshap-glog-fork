@@ -213,7 +213,12 @@ class ContiguousGroup {
 #if WAVEFRONT_SIZE == 64
   __device__ uint32_t size() const { return __popcll(mask_); }
   __device__ uint32_t thread_rank() const {
+
+#if 1
+    return __thread_rank(mask_);
+#else
     return __popcll(mask_ & __lanemask_lt());
+#endif
   }
   template <typename T>
   __device__ T shfl(T val, uint32_t src) const {
@@ -230,7 +235,11 @@ class ContiguousGroup {
 #elif WAVEFRONT_SIZE == 32
   __device__ uint32_t size() const { return __popc(mask_); }
   __device__ uint32_t thread_rank() const {
+#if 1
+    return __thread_rank(mask_);
+#else
     return __popc(mask_ & __lanemask_lt());
+#endif
   }
   template <typename T>
   __device__ T shfl(T val, uint32_t src) const {
@@ -266,8 +275,7 @@ class ContiguousGroup {
 // This functionality is available in cuda 11.0 on cc >=7.0
 // We reimplement for backwards compatibility
 // Assumes partitions are contiguous
-inline __device__ ContiguousGroup active_labeled_partition(lane_mask mask,
-                                                           int label) {
+inline __device__ ContiguousGroup active_labeled_partition(lane_mask mask, int label) {
   lane_mask subgroup_mask = __match_any_sync(mask, label);
 
   return ContiguousGroup(subgroup_mask);
@@ -1509,8 +1517,8 @@ void GPUTreeShapTaylorInteractions(DatasetT X, PathIteratorT begin,
   using path_vector = detail::RebindVector<
       typename std::iterator_traits<PathIteratorT>::value_type,
       DeviceAllocatorT>;
-  using split_condition =
-      typename std::iterator_traits<PathIteratorT>::value_type::split_type;
+
+  using split_condition = typename std::iterator_traits<PathIteratorT>::value_type::split_type;
 
   // Compute the global bias
   double_vector temp_phi(phis_end - phis_begin, 0.0);
@@ -1529,8 +1537,7 @@ void GPUTreeShapTaylorInteractions(DatasetT X, PathIteratorT begin,
         size_t group = idx % num_groups;
         size_t row_idx = idx / num_groups;
         d_temp_phi[IndexPhiInteractions(row_idx, num_groups, group, X.NumCols(),
-                                        X.NumCols(), X.NumCols())] +=
-            d_bias[group];
+                X.NumCols(), X.NumCols())] += d_bias[group];
       });
 
   path_vector deduplicated_paths;
@@ -1539,8 +1546,8 @@ void GPUTreeShapTaylorInteractions(DatasetT X, PathIteratorT begin,
       &device_paths, &deduplicated_paths, &device_bin_segments);
 
   detail::ComputeShapTaylorInteractions(X, device_bin_segments,
-                                        deduplicated_paths, num_groups,
-                                        temp_phi.data().get());
+          deduplicated_paths, num_groups, temp_phi.data().get());
+
   thrust::copy(temp_phi.begin(), temp_phi.end(), phis_begin);
 }
 

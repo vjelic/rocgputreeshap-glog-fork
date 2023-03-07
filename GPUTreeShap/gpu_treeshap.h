@@ -216,7 +216,7 @@ class ContiguousGroup {
 
 #if 1
     return __thread_rank(mask_);
-#else
+#else /* wrong */
     return __popcll(mask_ & __lanemask_lt());
 #endif
   }
@@ -229,7 +229,12 @@ class ContiguousGroup {
     return __shfl_up_sync(mask_, val, delta);
   }
   __device__ lane_mask ballot(int predicate) const {
+
+#if 1
+    return __ballot_sync(mask_, predicate) & mask_;
+#else  /* wrong due to hardware difference */
     return __ballot_sync(mask_, predicate) >> (__ffsll(mask_) - 1);
+#endif
   }
 
 #elif WAVEFRONT_SIZE == 32
@@ -237,7 +242,7 @@ class ContiguousGroup {
   __device__ uint32_t thread_rank() const {
 #if 1
     return __thread_rank(mask_);
-#else
+#else /* wrong */
     return __popc(mask_ & __lanemask_lt());
 #endif
   }
@@ -250,7 +255,12 @@ class ContiguousGroup {
     return __shfl_up_sync(mask_, val, delta);
   }
   __device__ lane_mask ballot(int predicate) const {
+
+#if 1
+    return __ballot_sync(mask_, predicate) & mask_;
+#else  /* wrong due to hardware difference */
     return __ballot_sync(mask_, predicate) >> (__ffs((lane_mask)mask_) - 1);
+#endif
   }
 
 #endif
@@ -277,7 +287,6 @@ class ContiguousGroup {
 // Assumes partitions are contiguous
 inline __device__ ContiguousGroup active_labeled_partition(lane_mask mask, int label) {
   lane_mask subgroup_mask = __match_any_sync(mask, label);
-
   return ContiguousGroup(subgroup_mask);
 }
 
@@ -403,9 +412,10 @@ template <typename DatasetT, typename SplitConditionT>
 __device__ float ComputePhi(const PathElement<SplitConditionT>& e,
                             size_t row_idx, const DatasetT& X,
                             const ContiguousGroup& group, float zero_fraction) {
-  float one_fraction =
-      e.EvaluateSplit(X, row_idx);
+  float one_fraction = e.EvaluateSplit(X, row_idx);
+
   GroupPath path(group, zero_fraction, one_fraction);
+
   size_t unique_path_length = group.size();
 
   // Extend the path
@@ -788,6 +798,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       &thread_active);
 
   lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
+
   if (!thread_active) return;
 
   auto labelled_group = active_labeled_partition(mask, e.path_idx);
@@ -802,6 +813,9 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       lane_mask r_ballot = labelled_group.ballot(r_cond);
 
       assert(!e.IsRoot() || (x_cond == r_cond));  // These should be the same for the root
+
+      /* this part may need to tune in the future
+       * as of now, the s and n are smaller than 33 */
 
 #if WAVEFRONT_SIZE == 64
       uint32_t s = __popcll(x_ballot & ~r_ballot);
@@ -857,10 +871,9 @@ void ComputeShapInterventional(
 
   const uint32_t grid_size = DivRoundUp(warps_needed, warps_per_block);
 
-  ShapInterventionalKernel<DatasetT, kBlockThreads, kRowsPerWarp>
-      <<<grid_size, kBlockThreads>>>(
-          X, R, bins_per_row, path_elements.data().get(),
-          bin_segments.data().get(), num_groups, phis);
+  ShapInterventionalKernel<DatasetT, kBlockThreads, kRowsPerWarp><<<grid_size, kBlockThreads>>>
+      (X, R, bins_per_row, path_elements.data().get(),
+       bin_segments.data().get(), num_groups, phis);
 }
 
 template <typename PathVectorT, typename SizeVectorT, typename DeviceAllocatorT>

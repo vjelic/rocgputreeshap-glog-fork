@@ -22,7 +22,6 @@ find_package(rocthrust REQUIRED)
 set(CMAKE_CXX_FLAGS "-I${HIP_INCLUDE_DIRS} -I${HIP_INCLUDE_DIRS}/hip -I${GPUTreeShap_SOURCE_DIR}/warp-primitives/include")
 
 message(STATUS "HIP include found in: ${HIP_INCLUDE_DIRS}")
-message(STATUS "HIP include found in: ${CMAKE_CXX_FLAGS}")
 
 # GPUTreeSHAP target is header-only
 add_library(GPUTreeShap INTERFACE)

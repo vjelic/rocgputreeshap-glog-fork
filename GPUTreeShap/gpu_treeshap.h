@@ -231,7 +231,7 @@ class ContiguousGroup {
   __device__ lane_mask ballot(int predicate) const {
 
 #if 1
-    return __ballot_sync(mask_, predicate) & mask_;
+    return __ballot_sync(mask_, predicate);
 #else  /* wrong due to hardware difference */
     return __ballot_sync(mask_, predicate) >> (__ffsll(mask_) - 1);
 #endif
@@ -257,7 +257,7 @@ class ContiguousGroup {
   __device__ lane_mask ballot(int predicate) const {
 
 #if 1
-    return __ballot_sync(mask_, predicate) & mask_;
+    return __ballot_sync(mask_, predicate);
 #else  /* wrong due to hardware difference */
     return __ballot_sync(mask_, predicate) >> (__ffs((lane_mask)mask_) - 1);
 #endif

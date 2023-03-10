@@ -481,16 +481,14 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
                const PathElement<SplitConditionT>* path_elements,
                const size_t* bin_segments, size_t num_groups, double* phis) {
   // Use shared memory for structs, otherwise nvcc puts in local memory
-  __shared__ DatasetT s_X;
-  s_X = X;
-  __shared__ PathElement<SplitConditionT> s_elements[kBlockSize];
+  extern __shared__ PathElement<SplitConditionT> s_elements[];
   PathElement<SplitConditionT>& e = s_elements[threadIdx.x];
 
   size_t start_row, end_row;
   bool thread_active;
 
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
-      s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
+      X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, &e,
       &thread_active);
 
   lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
@@ -526,7 +524,7 @@ void ComputeShap(
   const uint32_t grid_size = DivRoundUp(warps_needed, warps_per_block);
 
   ShapKernel<DatasetT, kBlockThreads, kRowsPerWarp>
-      <<<grid_size, kBlockThreads>>>(
+      <<<grid_size, kBlockThreads, sizeof(PathElement<SplitConditionT>) * kBlockThreads>>>(
           X, bins_per_row, path_elements.data().get(),
           bin_segments.data().get(), num_groups, phis);
 }
@@ -590,15 +588,13 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
                            const size_t* bin_segments, size_t num_groups,
                            double* phis_interactions) {
   // Use shared memory for structs, otherwise nvcc puts in local memory
-  __shared__ DatasetT s_X;
-  s_X = X;
-  __shared__ PathElement<SplitConditionT> s_elements[kBlockSize];
+  extern __shared__ PathElement<SplitConditionT> s_elements[];
   PathElement<SplitConditionT>* e = &s_elements[threadIdx.x];
 
   size_t start_row, end_row;
   bool thread_active;
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
-      s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
+      X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
   lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
   if (!thread_active) return;
@@ -655,7 +651,7 @@ void ComputeShapInteractions(
   const uint32_t grid_size = DivRoundUp(warps_needed, warps_per_block);
 
   ShapInteractionsKernel<DatasetT, kBlockThreads, kRowsPerWarp>
-      <<<grid_size, kBlockThreads>>>(
+      <<<grid_size, kBlockThreads, sizeof(PathElement<SplitConditionT>) * kBlockThreads>>>(
           X, bins_per_row, path_elements.data().get(),
           bin_segments.data().get(), num_groups, phis);
 }
@@ -669,22 +665,14 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
         const size_t* bin_segments, size_t num_groups,
         double* phis_interactions)
 {
-  // Use shared memory for structs, otherwise nvcc puts in local memory
-  __shared__ DatasetT s_X;
-
-  if (threadIdx.x == 0) {
-    s_X = X;
-  }
-  __syncthreads();
-
-  __shared__ PathElement<SplitConditionT> s_elements[kBlockSize];
+  extern __shared__ PathElement<SplitConditionT> s_elements[];
   PathElement<SplitConditionT>* e = &s_elements[threadIdx.x];
 
   size_t start_row, end_row;
   bool thread_active;
 
   ConfigureThread<DatasetT, kBlockSize, kRowsPerWarp>(
-      s_X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
+      X, bins_per_row, path_elements, bin_segments, &start_row, &end_row, e,
       &thread_active);
 
   lane_mask mask = __ballot_sync(FULL_MASK, thread_active);
@@ -747,7 +735,7 @@ void ComputeShapTaylorInteractions(
   const uint32_t grid_size = DivRoundUp(warps_needed, warps_per_block);
 
   ShapTaylorInteractionsKernel<DatasetT, kBlockThreads, kRowsPerWarp>
-      <<<grid_size, kBlockThreads>>>(
+      <<<grid_size, kBlockThreads, sizeof(PathElement<SplitConditionT>) * kBlockThreads>>>(
           X, bins_per_row, path_elements.data().get(),
           bin_segments.data().get(), num_groups, phis);
 }
@@ -788,7 +776,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
 
   __syncthreads();
 
-  __shared__ PathElement<SplitConditionT> s_elements[kBlockSize];
+  extern __shared__ PathElement<SplitConditionT> s_elements[];
   PathElement<SplitConditionT>& e = s_elements[threadIdx.x];
 
   size_t start_row, end_row;
@@ -871,7 +859,8 @@ void ComputeShapInterventional(
 
   const uint32_t grid_size = DivRoundUp(warps_needed, warps_per_block);
 
-  ShapInterventionalKernel<DatasetT, kBlockThreads, kRowsPerWarp><<<grid_size, kBlockThreads>>>
+  ShapInterventionalKernel<DatasetT, kBlockThreads, kRowsPerWarp>
+      <<<grid_size, kBlockThreads, sizeof(PathElement<SplitConditionT>) * kBlockThreads>>>
       (X, R, bins_per_row, path_elements.data().get(),
        bin_segments.data().get(), num_groups, phis);
 }

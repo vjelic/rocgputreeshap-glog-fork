@@ -665,6 +665,7 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
         const size_t* bin_segments, size_t num_groups,
         double* phis_interactions)
 {
+  // Use shared memory for structs, otherwise nvcc puts in local memory
   extern __shared__ PathElement<SplitConditionT> s_elements[];
   PathElement<SplitConditionT>* e = &s_elements[threadIdx.x];
 

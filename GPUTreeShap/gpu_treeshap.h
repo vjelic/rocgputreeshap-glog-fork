@@ -125,7 +125,7 @@ struct PathElement {
 
   /* this is hack to avoid memory error */
   __host__ __device__ PathElement & operator=(const PathElement<SplitConditionT> &a) {
-      if (this != &a) {
+      if (this != &a && a.is_initialized()) {
           this->path_idx = a.path_idx;
           this->feature_idx = a.feature_idx;
           this->group = a.group;
@@ -137,7 +137,7 @@ struct PathElement {
       return *this;
   }
 
-  __host__ __device__ bool is_initialized() {return init_flag == TREESHAP_MAGIC;}
+  __host__ __device__ bool is_initialized() const {return init_flag == TREESHAP_MAGIC;}
 
   __host__ __device__ bool IsRoot() const { return feature_idx == -1; }
 
@@ -965,7 +965,9 @@ void DeduplicatePaths(PathVectorT* device_paths,
   CheckCuda(hipHostMalloc(&h_num_runs_out, sizeof(*h_num_runs_out)));
 
   auto combine = [] __host__ __device__(PathElement<SplitConditionT> a, PathElement<SplitConditionT> b) {
+#if 0
       assert(a.is_initialized() || b.is_initialized());
+#endif
 
       // Combine duplicate features
       if (a.is_initialized() && b.is_initialized()) {

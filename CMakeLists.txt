@@ -19,7 +19,7 @@ enable_language(HIP)
 find_package(hip REQUIRED)
 find_package(rocthrust REQUIRED)
 
-set(CMAKE_CXX_FLAGS "-I${HIP_INCLUDE_DIRS} -I${HIP_INCLUDE_DIRS}/hip -I${GPUTreeShap_SOURCE_DIR}/warp-primitives/include")
+set(CMAKE_CXX_FLAGS "-I${HIP_INCLUDE_DIRS} -I${HIP_INCLUDE_DIRS}/hip")
 
 message(STATUS "HIP include found in: ${HIP_INCLUDE_DIRS}")
 
@@ -28,7 +28,6 @@ add_library(GPUTreeShap INTERFACE)
 add_library(GPUTreeShap::GPUTreeShap ALIAS GPUTreeShap)
 target_sources(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR}/GPUTreeShap/gpu_treeshap.h)
 target_include_directories(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR}/GPUTreeShap)
-target_include_directories(GPUTreeShap INTERFACE ${GPUTreeShap_SOURCE_DIR}/warp-primitives/include)
 
 if(BUILD_GTEST)
   set(gtest_force_shared_crt ON CACHE BOOL "Always use msvcrt.dll")

@@ -4,15 +4,10 @@
 
 #include <hip/hip_runtime.h>
 #include <hip/hip_cooperative_groups.h>
-#include <hip/device_functions.h>
 
 #ifdef __AMDGCN_WAVEFRONT_SIZE
 #undef WAVEFRONT_SIZE
 #define WAVEFRONT_SIZE __AMDGCN_WAVEFRONT_SIZE
-#endif
-
-#if WAVEFRONT_SIZE != 64
-#error "WAVEFRONT_SIZE 64 required"
 #endif
 
 /* this header file provides _*_sync functions, which is a hack only,
@@ -72,7 +67,7 @@ __device__ inline unsigned int __mask_size(lane_mask mask)
 {
 #if WAVEFRONT_SIZE == 64
     return __popcll(mask);
-#elif
+#else
     return __popc(mask);
 #endif
 }

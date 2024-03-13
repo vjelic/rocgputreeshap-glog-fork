@@ -363,13 +363,13 @@ __device__ bool FloatApproximatelyEqual(float a, float b) {
 }
 
 // Expose pweight for testing
-class TestGroupPath : public detail::GroupPath {
+class TestGroupPath : public gpu_treeshap::detail::GroupPath {
  public:
-  __device__ TestGroupPath(const detail::ContiguousGroup& g,
+  __device__ TestGroupPath(const gpu_treeshap::detail::ContiguousGroup& g,
                            float zero_fraction, float one_fraction)
-      : detail::GroupPath(g, zero_fraction, one_fraction) {}
-  using detail::GroupPath::pweight_;
-  using detail::GroupPath::unique_depth_;
+      : gpu_treeshap::detail::GroupPath(g, zero_fraction, one_fraction) {}
+  using gpu_treeshap::detail::GroupPath::pweight_;
+  using gpu_treeshap::detail::GroupPath::unique_depth_;
 };
 
 template <typename DatasetT, typename SplitConditionT>
@@ -392,7 +392,7 @@ __global__ void TestExtendKernel(
   float one_fraction =
       e.split_condition.EvaluateSplit(X.GetElement(0, e.feature_idx));
   float zero_fraction = e.zero_fraction;
-  auto labelled_group = detail::active_labeled_partition(mask, 0);
+  auto labelled_group = gpu_treeshap::detail::active_labeled_partition(mask, 0);
   TestGroupPath path(labelled_group, zero_fraction, one_fraction);
   path.Extend();
   assert(path.unique_depth_ == 1);
@@ -523,7 +523,7 @@ __global__ void TestExtendMultipleKernel(
   cooperative_groups::coalesced_group active_group =
       cooperative_groups::coalesced_threads();
   int label = warp.thread_rank() >= n_first;
-  auto labeled_group = detail::active_labeled_partition(mask, label);
+  auto labeled_group = gpu_treeshap::detail::active_labeled_partition(mask, label);
   PathElement<SplitConditionT> e = path_elements[warp.thread_rank()];
 
   // Test first training instance
@@ -628,7 +628,7 @@ __global__ void TestActiveLabeledPartition() {
       cooperative_groups::tiled_partition<32, cooperative_groups::thread_block>(
           block);
   int label = warp.thread_rank() < 5 ? 3 : 6;
-  auto labelled_partition = detail::active_labeled_partition(FULL_MASK, label);
+  auto labelled_partition = gpu_treeshap::detail::active_labeled_partition(FULL_MASK, label);
 
   if (label == 3) {
     assert(labelled_partition.size() == 5);
@@ -643,7 +643,7 @@ __global__ void TestActiveLabeledPartition() {
   uint32_t even_mask = __ballot_sync(FULL_MASK, !odd);
   if (odd) {
     auto labelled_partition2 =
-        detail::active_labeled_partition(odd_mask, label);
+        gpu_treeshap::detail::active_labeled_partition(odd_mask, label);
     if (label == 3) {
       assert(labelled_partition2.size() == 2);
       assert(labelled_partition2.thread_rank() == warp.thread_rank() / 2);
@@ -653,7 +653,7 @@ __global__ void TestActiveLabeledPartition() {
     }
   } else {
     auto labelled_partition2 =
-        detail::active_labeled_partition(even_mask, label);
+        gpu_treeshap::detail::active_labeled_partition(even_mask, label);
     if (label == 3) {
       assert(labelled_partition2.size() == 3);
       assert(labelled_partition2.thread_rank() == warp.thread_rank() / 2);
@@ -674,7 +674,7 @@ TEST(GPUTreeShap, BFDBinPacking) {
   counts[0] = 2;
   counts[1] = 2;
   counts[2] = 1;
-  auto bin_packing = detail::BFDBinPacking(counts, 3);
+  auto bin_packing = gpu_treeshap::detail::BFDBinPacking(counts, 3);
   EXPECT_EQ(bin_packing[0], 0u);
   EXPECT_EQ(bin_packing[1], 1u);
   EXPECT_EQ(bin_packing[2], 0u);
@@ -693,7 +693,7 @@ TEST(GPUTreeShap, BFDBinPacking) {
   counts[9] = 2;
   counts[10] = 2;
   counts[11] = 2;
-  bin_packing = detail::BFDBinPacking(counts, 10);
+  bin_packing = gpu_treeshap::detail::BFDBinPacking(counts, 10);
   EXPECT_EQ(bin_packing[0], 0u);
   EXPECT_EQ(bin_packing[1], 0u);
   EXPECT_EQ(bin_packing[2], 0u);
@@ -714,7 +714,7 @@ TEST(GPUTreeShap, NFBinPacking) {
   counts[1] = 3;
   counts[2] = 1;
   counts[3] = 2;
-  auto bin_packing = detail::NFBinPacking(counts, 5);
+  auto bin_packing = gpu_treeshap::detail::NFBinPacking(counts, 5);
   EXPECT_EQ(bin_packing[0], 0u);
   EXPECT_EQ(bin_packing[1], 1u);
   EXPECT_EQ(bin_packing[2], 1u);
@@ -728,7 +728,7 @@ TEST(GPUTreeShap, FFDBinPacking) {
   counts[2] = 3;
   counts[3] = 4;
   counts[4] = 1;
-  auto bin_packing = detail::FFDBinPacking(counts, 5);
+  auto bin_packing = gpu_treeshap::detail::FFDBinPacking(counts, 5);
   EXPECT_EQ(bin_packing[0], 1u);
   EXPECT_EQ(bin_packing[1], 1u);
   EXPECT_EQ(bin_packing[2], 2u);
@@ -739,7 +739,7 @@ TEST(GPUTreeShap, FFDBinPacking) {
 __global__ void TestContiguousGroup() {
   int label = threadIdx.x > 2 && threadIdx.x < 6 ? 1 : threadIdx.x >= 6 ? 2 : 0;
 
-  auto group = detail::active_labeled_partition(FULL_MASK, label);
+  auto group = gpu_treeshap::detail::active_labeled_partition(FULL_MASK, label);
 
   if (label == 1) {
     assert(group.size() == 3);
@@ -884,16 +884,16 @@ TEST(GPUTreeShap, TaylorInteractionsBasic) {
 
 
 TEST(GPUTreeShap, GetWCoefficients) {
-  EXPECT_DOUBLE_EQ(detail::W(0, 1), 1.0);
-  EXPECT_DOUBLE_EQ(detail::W(0, 2), 0.5);
-  EXPECT_DOUBLE_EQ(detail::W(1, 2), 0.5);
-  EXPECT_DOUBLE_EQ(detail::W(0, 3), 2.0 / 6);
-  EXPECT_DOUBLE_EQ(detail::W(1, 3), 1.0 / 6);
-  EXPECT_DOUBLE_EQ(detail::W(2, 3), 2.0 / 6);
-  EXPECT_DOUBLE_EQ(detail::W(0, 4), 6.0 / 24);
-  EXPECT_DOUBLE_EQ(detail::W(1, 4), 2.0 / 24);
-  EXPECT_DOUBLE_EQ(detail::W(2, 4), 2.0 / 24);
-  EXPECT_DOUBLE_EQ(detail::W(3, 4), 6.0 / 24);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(0, 1), 1.0);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(0, 2), 0.5);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(1, 2), 0.5);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(0, 3), 2.0 / 6);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(1, 3), 1.0 / 6);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(2, 3), 2.0 / 6);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(0, 4), 6.0 / 24);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(1, 4), 2.0 / 24);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(2, 4), 2.0 / 24);
+  EXPECT_DOUBLE_EQ(gpu_treeshap::detail::W(3, 4), 6.0 / 24);
 }
 
 TEST(GPUTreeShap, InterventionalBasic) {

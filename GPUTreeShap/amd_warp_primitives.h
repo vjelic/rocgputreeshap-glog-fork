@@ -6,11 +6,11 @@
 #include <hip/hip_cooperative_groups.h>
 
 #if __AMDGCN_WAVEFRONT_SIZE == 64
-#undef WAVEFRONT_SIZE
-#define WAVEFRONT_SIZE 64
+#undef WARP_SIZE
+#define WARP_SIZE 64
 #elif __AMDGCN_WAVEFRONT_SIZE == 32
-#undef WAVEFRONT_SIZE
-#define WAVEFRONT_SIZE 32
+#undef WARP_SIZE
+#define WARP_SIZE 32
 #endif
 
 /* this header file provides _*_sync functions, which is not 
@@ -60,7 +60,7 @@ __device__ inline int __thread_rank(lane_mask mask)
 
 __device__ inline unsigned int __mask_size(lane_mask mask)
 {
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
     return __popcll(mask);
 #else
     return __popc(mask);
@@ -73,8 +73,8 @@ __device__ inline int __thread_rank_to_lane_id(lane_mask mask, int i)
 
     if (i < 0 || i >= size) return -1;
 
-    return (size == WAVEFRONT_SIZE) ? i
-        : (WAVEFRONT_SIZE == 64) ? __fns64(mask, 0, (i + 1))
+    return (size == WARP_SIZE) ? i
+        : (WARP_SIZE == 64) ? __fns64(mask, 0, (i + 1))
         : __fns32(mask, 0, (i + 1));
 }
 
@@ -135,7 +135,7 @@ __device__ inline lane_mask __ballot_sync(lane_mask mask, int predicate)
 }
 
 template <class T>
-__device__ inline T __shfl_sync(lane_mask mask, T var, int src, int width = WAVEFRONT_SIZE)
+__device__ inline T __shfl_sync(lane_mask mask, T var, int src, int width = WARP_SIZE)
 {
     /* calling thread must be set in the mask */
 #ifndef WARP_NO_MASK_CHECK
@@ -149,7 +149,7 @@ __device__ inline T __shfl_sync(lane_mask mask, T var, int src, int width = WAVE
 }
 
 template <class T>
-__device__ inline T __shfl_down_sync(lane_mask mask, T var, unsigned int lane_delta, int width = WAVEFRONT_SIZE)
+__device__ inline T __shfl_down_sync(lane_mask mask, T var, unsigned int lane_delta, int width = WARP_SIZE)
 {
     /* calling thread must be set in the mask */
 #ifndef WARP_NO_MASK_CHECK
@@ -163,7 +163,7 @@ __device__ inline T __shfl_down_sync(lane_mask mask, T var, unsigned int lane_de
 }
 
 template <class T>
-__device__ inline T __shfl_up_sync(lane_mask mask, T var, unsigned int lane_delta, int width = WAVEFRONT_SIZE)
+__device__ inline T __shfl_up_sync(lane_mask mask, T var, unsigned int lane_delta, int width = WARP_SIZE)
 {
     /* calling thread must be set in the mask */
 #ifndef WARP_NO_MASK_CHECK
@@ -177,7 +177,7 @@ __device__ inline T __shfl_up_sync(lane_mask mask, T var, unsigned int lane_delt
 }
 
 template <class T>
-__device__ inline T __shfl_xor_sync(lane_mask mask, T var, int lane_mask, int width = WAVEFRONT_SIZE)
+__device__ inline T __shfl_xor_sync(lane_mask mask, T var, int lane_mask, int width = WARP_SIZE)
 {
     /* calling thread must be set in the mask */
 #ifndef WARP_NO_MASK_CHECK
@@ -208,7 +208,7 @@ __device__ inline lane_mask __match_any_sync(lane_mask mask, T value)
     bmask = __branchmask();
 
     while (1) {
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
         int i = __ffsll(bmask) - 1;
 #else
         int i = __ffs((unsigned int)bmask) - 1;
@@ -239,7 +239,7 @@ __device__ inline lane_mask __match_any_sync(lane_mask mask, T value)
 #endif
 
     while (1) {
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
         int i = __ffsll(bmask) - 1;
 #else
         int i = __ffs((unsigned int)bmask) - 1;
@@ -349,7 +349,7 @@ __device__ inline T __reduce_impl_sync(lane_mask mask, T var, BinaryOP op)
     if (size == 1) return var;
 
     /* binary tree alg */
-    if (size == WAVEFRONT_SIZE) {
+    if (size == WARP_SIZE) {
         for (int mask = size / 2; mask > 0; mask /= 2)
             var = op(var, __shfl_xor(var, mask));
         return var;
@@ -359,8 +359,8 @@ __device__ inline T __reduce_impl_sync(lane_mask mask, T var, BinaryOP op)
             /* check src lane */
             src = tid + size / 2;
 
-            lane = (size == WAVEFRONT_SIZE) ? src
-                : (WAVEFRONT_SIZE == 64) ? __fns64(mask, 0, (src + 1))
+            lane = (size == WARP_SIZE) ? src
+                : (WARP_SIZE == 64) ? __fns64(mask, 0, (src + 1))
                 : __fns32(mask, 0, (src + 1));
 
             T tp = __shfl(var, lane);
@@ -375,8 +375,8 @@ __device__ inline T __reduce_impl_sync(lane_mask mask, T var, BinaryOP op)
             size = (size + 1) / 2;
         }
 
-        lane = (size == WAVEFRONT_SIZE) ? 0
-            : (WAVEFRONT_SIZE == 64) ? __fns64(mask, 0, 1)
+        lane = (size == WARP_SIZE) ? 0
+            : (WARP_SIZE == 64) ? __fns64(mask, 0, 1)
             : __fns32(mask, 0, 1);
 
         return __shfl(var, lane);

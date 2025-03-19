@@ -218,7 +218,7 @@ class APITest : public ::testing::Test {
 };
 
 TEST_F(APITest, PathTooLong) {
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
   model.resize(65);
 #else
   model.resize(33);
@@ -229,7 +229,7 @@ TEST_F(APITest, PathTooLong) {
     model[i] = {0, static_cast<int64_t>(i), 0, {0, 0, 0}, 0, 0};
   }
 
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
   ExpectAPIThrow<std::invalid_argument>("Tree depth must be < 64");
 #else
   ExpectAPIThrow<std::invalid_argument>("Tree depth must be < 32");

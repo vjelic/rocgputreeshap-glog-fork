@@ -49,8 +49,6 @@
 
 #include "amd_warp_primitives.h"
 
-#define WARP_SIZE WAVEFRONT_SIZE
-
 namespace gpu_treeshap {
 
 using namespace hip_warp_primitives;
@@ -229,7 +227,7 @@ class ContiguousGroup {
  public:
   __device__ ContiguousGroup(lane_mask mask) : mask_(mask) {}
 
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
   __device__ uint32_t size() const { return __popcll(mask_); }
   __device__ uint32_t thread_rank() const {
 
@@ -256,7 +254,7 @@ class ContiguousGroup {
 #endif
   }
 
-#elif WAVEFRONT_SIZE == 32
+#elif WARP_SIZE == 32
   __device__ uint32_t size() const { return __popc(mask_); }
   __device__ uint32_t thread_rank() const {
 #if 1
@@ -487,9 +485,9 @@ ConfigureThread(const DatasetT& X, const size_t bins_per_row,
 
 #define GPUTREESHAP_MAX_THREADS_PER_BLOCK 256
 
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
 #define FULL_MASK 0xffffffffffffffff
-#elif WAVEFRONT_SIZE == 32
+#elif WARP_SIZE == 32
 #define FULL_MASK 0xffffffff
 #endif
 
@@ -825,10 +823,10 @@ __global__ void __launch_bounds__(GPUTREESHAP_MAX_THREADS_PER_BLOCK)
       /* this part may need to tune in the future
        * as of now, the s and n are smaller than 33 */
 
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
       uint32_t s = __popcll(x_ballot & ~r_ballot);
       uint32_t n = __popcll(x_ballot ^ r_ballot);
-#elif WAVEFRONT_SIZE == 32
+#elif WARP_SIZE == 32
       uint32_t s = __popc(x_ballot & ~r_ballot);
       uint32_t n = __popc(x_ballot ^ r_ballot);
 #endif
@@ -1188,9 +1186,9 @@ void ValidatePaths(const PathVectorT& device_paths,
                      path_lengths.end(), too_long_op);
 
   if (invalid_length) {
-#if WAVEFRONT_SIZE == 64
+#if WARP_SIZE == 64
     throw std::invalid_argument("Tree depth must be < 64");
-#elif WAVEFRONT_SIZE == 32
+#elif WARP_SIZE == 32
     throw std::invalid_argument("Tree depth must be < 32");
 #endif
   }

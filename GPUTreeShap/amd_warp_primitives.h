@@ -5,9 +5,12 @@
 #include <hip/hip_runtime.h>
 #include <hip/hip_cooperative_groups.h>
 
-#ifdef __AMDGCN_WAVEFRONT_SIZE
+#if __AMDGCN_WAVEFRONT_SIZE == 64
 #undef WAVEFRONT_SIZE
-#define WAVEFRONT_SIZE __AMDGCN_WAVEFRONT_SIZE
+#define WAVEFRONT_SIZE 64
+#elif __AMDGCN_WAVEFRONT_SIZE == 32
+#undef WAVEFRONT_SIZE
+#define WAVEFRONT_SIZE 32
 #endif
 
 /* this header file provides _*_sync functions, which is not 
